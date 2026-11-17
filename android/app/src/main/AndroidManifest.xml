@@ -43,4 +43,9 @@
 
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- Recordatorio "tu sesión es en 1 hora" a la hora exacta. Se concede al
+         instalar, sin preguntar. Ojo: si algún día la app va a Google Play,
+         Play solo lo admite en apps de alarma/calendario; habría que quitarlo
+         (la app pasa sola a alarmas no exactas) -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
 </manifest>

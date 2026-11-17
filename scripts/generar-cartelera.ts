@@ -18,6 +18,7 @@ import {
   type EntradaCacheOmdb,
 } from "@/lib/omdb";
 import { cerrarNavegador } from "@/lib/scrapers/browser";
+import { normalizarTitulo } from "@/lib/titulos";
 import type { CarteleraDia } from "@/types";
 
 const DIR_DATOS = path.join(process.cwd(), "public", "datos");
@@ -81,6 +82,38 @@ async function main() {
     fechas,
     actualizado_en: new Date().toISOString(),
   });
+
+  // Resumen ligero para los avisos de "Quiero verla" de la app: qué películas
+  // hay en los próximos días y en qué cines (el aviso en segundo plano solo
+  // descarga este archivo)
+  const peliculas = new Map<
+    string,
+    { clave: string; titulo: string; fechas: Set<string>; cines: Set<string> }
+  >();
+  for (const fecha of fechas) {
+    const dia = leerJson<CarteleraDia>(path.join(DIR_DATOS, `${fecha}.json`));
+    for (const cartel of dia?.cines ?? []) {
+      for (const { pelicula, sesiones } of cartel.peliculas) {
+        if (sesiones.length === 0) continue;
+        const clave = normalizarTitulo(pelicula.titulo);
+        if (!clave) continue;
+        if (!peliculas.has(clave)) {
+          peliculas.set(clave, { clave, titulo: pelicula.titulo, fechas: new Set(), cines: new Set() });
+        }
+        peliculas.get(clave)!.fechas.add(fecha);
+        peliculas.get(clave)!.cines.add(cartel.cine.nombre);
+      }
+    }
+  }
+  escribirJson(
+    path.join(DIR_DATOS, "peliculas.json"),
+    Array.from(peliculas.values()).map((p) => ({
+      clave: p.clave,
+      titulo: p.titulo,
+      fechas: Array.from(p.fechas).sort(),
+      cines: Array.from(p.cines).sort(),
+    })),
+  );
   escribirJson(CACHE_OMDB, exportarCacheOmdb());
 
   const segundos = ((Date.now() - inicio) / 1000).toFixed(0);

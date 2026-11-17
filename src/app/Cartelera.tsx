@@ -11,6 +11,7 @@ import {
   X,
   Download,
   UserRound,
+  Bookmark,
   Star,
   Sun,
   Moon,
@@ -22,9 +23,11 @@ import {
 } from "lucide-react";
 import type { CartelCine, Sesion } from "@/types";
 import { tarifasDeSesion } from "@/lib/obtenerPrecioSesion";
+import { GENEROS, generosDe, type Genero } from "@/lib/generos";
 import HojaSesion, { AccionSesionContext, type FichaSesion } from "./HojaSesion";
 import MiCine, { FormEntrada } from "./MiCine";
-import type { EntradaCine } from "@/lib/miCine";
+import { alternarDeseo, useMiCine, type EntradaCine } from "@/lib/miCine";
+import { pedirPermisoAvisos, sincronizarDeseos } from "@/lib/avisos";
 import {
   decodificarEntidadesHtml,
   esMismaPelicula,
@@ -1063,14 +1066,19 @@ function VistaPorCine({
 function VistaPorPelicula({
   carteles,
   busqueda,
+  genero = null,
   ubicacionUsuario,
   tema,
 }: {
   carteles: CartelEnriquecido[];
   busqueda: string;
+  genero?: Genero | null;
   ubicacionUsuario: Coords | null;
   tema: Tema;
 }) {
+  const { deseos } = useMiCine();
+  const deseadas = useMemo(() => new Set(deseos.map((d) => d.clave)), [deseos]);
+
   // Estado para controlar qué película se está viendo en detalle
   const [peliculaSeleccionada, setPeliculaSeleccionada] = useState<
     string | null
@@ -1087,6 +1095,8 @@ function VistaPorPelicula({
       {
         pelicula: PeliculaEnriquecida;
         cines: { cine: CartelEnriquecido["cine"]; sesiones: Sesion[] }[];
+        // Unión de los géneros que da cada cine para esta película
+        generos: Set<Genero>;
       }
     >();
 
@@ -1105,10 +1115,15 @@ function VistaPorPelicula({
         };
 
         if (!mapa.has(clave)) {
-          mapa.set(clave, { pelicula: peliculaDecodificada, cines: [] });
+          mapa.set(clave, {
+            pelicula: peliculaDecodificada,
+            cines: [],
+            generos: new Set(),
+          });
         }
 
         const grupo = mapa.get(clave)!;
+        generosDe(entry.pelicula.genero).forEach((g) => grupo.generos.add(g));
         grupo.pelicula = elegirMejorPelicula(
           grupo.pelicula,
           peliculaDecodificada,
@@ -1172,6 +1187,7 @@ function VistaPorPelicula({
 
         grupoA.pelicula = elegirMejorPelicula(grupoA.pelicula, grupoB.pelicula);
         grupoA.cines = fusionarListasDeCines(grupoA.cines, grupoB.cines);
+        grupoB.generos.forEach((g) => grupoA.generos.add(g));
 
         mapa.delete(claveB);
       }
@@ -1181,8 +1197,9 @@ function VistaPorPelicula({
 
     const agrupadas = Array.from(mapa.values()).filter(
       (p) =>
-        !busqueda ||
-        normalizarTitulo(p.pelicula.titulo).includes(busquedaNormalizada),
+        (!busqueda ||
+          normalizarTitulo(p.pelicula.titulo).includes(busquedaNormalizada)) &&
+        (!genero || p.generos.has(genero)),
     );
 
     if (ubicacionUsuario) {
@@ -1204,7 +1221,7 @@ function VistaPorPelicula({
       const sesionesB = b.cines.reduce((acc, c) => acc + c.sesiones.length, 0);
       return sesionesB - sesionesA;
     });
-  }, [carteles, busqueda, ubicacionUsuario]);
+  }, [carteles, busqueda, genero, ubicacionUsuario]);
 
   // Si hay una película seleccionada, renderizamos su vista detallada
   const pDetalle = peliculasAgrupadas.find(
@@ -1306,6 +1323,28 @@ function VistaPorPelicula({
                   </span>
                 )}
               </div>
+              {ES_APP && (
+                <button
+                  onClick={() => {
+                    const clave = normalizarTitulo(pelicula.titulo);
+                    if (!deseadas.has(clave)) pedirPermisoAvisos();
+                    alternarDeseo({ clave, titulo: pelicula.titulo, poster: pelicula.poster });
+                  }}
+                  className={`mt-3 mx-auto sm:mx-0 inline-flex items-center gap-2 rounded-xl border px-3 py-1.5 text-sm font-semibold ${
+                    deseadas.has(normalizarTitulo(pelicula.titulo))
+                      ? "bg-amber-500 border-amber-500 text-black"
+                      : tema === "oscuro"
+                        ? "border-amber-500/40 text-amber-300"
+                        : "border-amber-400 text-amber-700"
+                  }`}
+                >
+                  <Bookmark
+                    size={15}
+                    className={deseadas.has(normalizarTitulo(pelicula.titulo)) ? "fill-black" : ""}
+                  />
+                  {deseadas.has(normalizarTitulo(pelicula.titulo)) ? "En tu lista" : "Quiero verla"}
+                </button>
+              )}
             </div>
           </div>
 
@@ -1376,6 +1415,7 @@ function VistaPorPelicula({
         <Film size={32} className="mx-auto mb-3 opacity-30" />
         <p>
           No se encontraron películas{busqueda ? ` para "${busqueda}"` : ""}
+          {genero ? ` de ${genero.toLowerCase()}` : ""}
         </p>
       </div>
     );
@@ -1437,6 +1477,13 @@ function VistaPorPelicula({
 
                 {/* Oscurecer parte inferior */}
                 <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent" />
+
+                {/* En tu lista "Quiero verla" */}
+                {deseadas.has(normalizarTitulo(pelicula.titulo)) && (
+                  <div className="absolute top-3 left-3 rounded-full bg-amber-500 p-1.5 shadow-lg">
+                    <Bookmark size={12} className="fill-black text-black" />
+                  </div>
+                )}
 
                 {/* Sesiones */}
                 <div
@@ -1621,6 +1668,11 @@ export default function Cartelera({
   );
 
   const actualizacion = useActualizacionDisponible();
+
+  const { deseos } = useMiCine();
+  useEffect(() => {
+    if (ES_APP) sincronizarDeseos(deseos, URL_DATOS);
+  }, [deseos]);
   const [avisoCerrado, setAvisoCerrado] = useState(false);
 
   const {
@@ -1744,6 +1796,16 @@ export default function Cartelera({
       ).size,
     [carteles],
   );
+
+  // Filtro por género (app): solo se ofrecen los que hay ese día
+  const [generoFiltro, setGeneroFiltro] = useState<Genero | null>(null);
+  const generosDelDia = useMemo(() => {
+    const presentes = new Set<Genero>();
+    for (const c of carteles) {
+      for (const p of c.peliculas) generosDe(p.pelicula.genero).forEach((g) => presentes.add(g));
+    }
+    return GENEROS.filter((g) => presentes.has(g));
+  }, [carteles]);
 
   // Todos los cines con cartelera cargada, para elegir en el formulario
   const cinesConocidos = useMemo(() => {
@@ -1995,6 +2057,34 @@ export default function Cartelera({
                 <X size={14} />
               </button>
             )}
+          </div>
+        )}
+
+        {/* Géneros disponibles ese día */}
+        {vista === "pelicula" && generosDelDia.length > 0 && (
+          <div className="-mx-4 mb-4 overflow-x-auto scrollbar-none">
+            <div className="flex min-w-max gap-2 px-4">
+              {[null, ...generosDelDia].map((g) => {
+                const activo = generoFiltro === g;
+                return (
+                  <button
+                    key={g ?? "todos"}
+                    onClick={() => setGeneroFiltro(g)}
+                    className={`rounded-full border px-3.5 py-1.5 text-sm font-semibold transition-colors ${
+                      activo
+                        ? esOscuro
+                          ? "bg-amber-500/20 border-amber-400/50 text-amber-300"
+                          : "bg-amber-100 border-amber-400 text-amber-700"
+                        : esOscuro
+                          ? "bg-zinc-900/60 border-zinc-800 text-zinc-400"
+                          : "bg-zinc-100 border-zinc-200 text-zinc-500"
+                    }`}
+                  >
+                    {g ?? "Todos"}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         )}
     </>
@@ -2403,6 +2493,7 @@ export default function Cartelera({
             <VistaPorPelicula
               carteles={carteles}
               busqueda={busqueda}
+              genero={ES_APP ? generoFiltro : null}
               ubicacionUsuario={ubicacionUsuario}
               tema={tema}
             />
@@ -2449,6 +2540,8 @@ export default function Cartelera({
               hora: sesion.hora,
               sala: sesion.sala,
               formato: sesion.formato,
+              duracion: pelicula.duracion,
+              genero: pelicula.genero,
             });
           }}
         />
@@ -2456,6 +2549,7 @@ export default function Cartelera({
       {ES_APP && panelMiCine && (
         <MiCine
           tema={tema}
+          urlDatos={URL_DATOS}
           onCerrar={() => setPanelMiCine(false)}
           onEditar={setFormulario}
         />

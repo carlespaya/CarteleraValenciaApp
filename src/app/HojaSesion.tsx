@@ -16,7 +16,12 @@ type Tema = "oscuro" | "claro";
 export interface FichaSesion {
   sesion: Sesion;
   cine: { id: string; nombre: string; direccion?: string };
-  pelicula: { titulo: string; poster?: string | null };
+  pelicula: {
+    titulo: string;
+    poster?: string | null;
+    duracion?: number;
+    genero?: string;
+  };
 }
 
 // Si hay proveedor (solo en la app), tocar una sesión abre su ficha

@@ -23,19 +23,31 @@ export interface EntradaCine {
   sala?: string;
   butaca?: string;
   formato?: string;
+  duracion?: number; // minutos (para "Tu año en el cine")
+  genero?: string;
   valoracion?: Valoracion;
   nota?: string;
+  tieneFoto?: boolean; // foto de la entrada guardada en src/lib/fotos.ts
   creadaEn: string;
+}
+
+// Película de la lista "Quiero verla" (la app avisa cuando entra en cartelera)
+export interface Deseo {
+  clave: string; // título normalizado (src/lib/titulos.ts)
+  titulo: string;
+  poster?: string | null;
+  anadidaEn: string;
 }
 
 export interface DatosMiCine {
   version: 1;
   nombre: string;
   entradas: EntradaCine[];
+  deseos: Deseo[];
 }
 
 const CLAVE = "cinevalencia-mi-cine";
-const VACIO: DatosMiCine = { version: 1, nombre: "", entradas: [] };
+const VACIO: DatosMiCine = { version: 1, nombre: "", entradas: [], deseos: [] };
 
 let cache: DatosMiCine | null = null;
 const oyentes = new Set<() => void>();
@@ -55,10 +67,14 @@ function validar(datos: unknown): DatosMiCine {
       !!e && typeof e.id === "string" && typeof e.pelicula === "string" &&
       typeof e.fecha === "string" && /^\d{4}-\d{2}-\d{2}$/.test(e.fecha),
   );
+  const deseos = (Array.isArray(d.deseos) ? d.deseos : []).filter(
+    (x): x is Deseo => !!x && typeof x.clave === "string" && typeof x.titulo === "string",
+  );
   return {
     version: 1,
     nombre: typeof d.nombre === "string" ? d.nombre : "",
     entradas: ordenar(entradas),
+    deseos,
   };
 }
 
@@ -107,6 +123,18 @@ export function cambiarNombre(nombre: string) {
   escribir({ ...leer(), nombre });
 }
 
+/** Añade o quita una película de "Quiero verla" */
+export function alternarDeseo(deseo: Omit<Deseo, "anadidaEn">) {
+  const datos = leer();
+  const existe = datos.deseos.some((x) => x.clave === deseo.clave);
+  escribir({
+    ...datos,
+    deseos: existe
+      ? datos.deseos.filter((x) => x.clave !== deseo.clave)
+      : [{ ...deseo, anadidaEn: new Date().toISOString() }, ...datos.deseos],
+  });
+}
+
 /** Copia de seguridad en texto (JSON) */
 export function exportarMiCine(): string {
   return JSON.stringify(leer());
@@ -118,10 +146,12 @@ export function importarMiCine(texto: string): number {
   const datos = leer();
   const ids = new Set(datos.entradas.map((e) => e.id));
   const nuevas = importado.entradas.filter((e) => !ids.has(e.id));
+  const claves = new Set(datos.deseos.map((x) => x.clave));
   escribir({
     version: 1,
     nombre: datos.nombre || importado.nombre,
     entradas: ordenar([...datos.entradas, ...nuevas]),
+    deseos: [...datos.deseos, ...importado.deseos.filter((x) => !claves.has(x.clave))],
   });
   return nuevas.length;
 }

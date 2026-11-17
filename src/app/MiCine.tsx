@@ -1,22 +1,28 @@
 "use client";
 
 // Panel "Mi cine" de la app: perfil, calendario de los días que has ido al
-// cine, lista de entradas, tus experiencias por cine y el formulario para
-// guardar una entrada. Los datos viven solo en el móvil (src/lib/miCine.ts).
+// cine, tus entradas (con diseño de ticket y la foto del QR), la lista
+// "Quiero ver", el resumen "Mi año en el cine" y el formulario para guardar
+// una entrada. Los datos viven solo en el móvil (src/lib/miCine.ts).
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
+  Bookmark,
+  Camera,
   ChevronLeft,
   ChevronRight,
   Film,
-  Plus,
-  Star,
-  X,
   MapPin,
+  Pencil,
+  Plus,
+  Share2,
+  Star,
   Trash2,
+  X,
 } from "lucide-react";
 import {
+  alternarDeseo,
   borrarEntrada,
   cambiarNombre,
   exportarMiCine,
@@ -29,6 +35,11 @@ import {
 } from "@/lib/miCine";
 import { useCerrarConAtras } from "@/lib/atras";
 import { fechaISO } from "@/lib/fechas";
+import { generosDe } from "@/lib/generos";
+import { normalizarTitulo } from "@/lib/titulos";
+import { borrarFoto, guardarFoto, urlFoto } from "@/lib/fotos";
+import { cancelarRecordatorio, pedirPermisoAvisos, programarRecordatorio } from "@/lib/avisos";
+import { compartirImagen, dibujarResumen, dibujarTicket } from "@/lib/compartir";
 
 type Tema = "oscuro" | "claro";
 
@@ -37,6 +48,8 @@ const MESES = [
   "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
 ];
 const DIAS_CORTOS = ["L", "M", "X", "J", "V", "S", "D"];
+const DIAS_SEMANA = ["domingos", "lunes", "martes", "miércoles", "jueves", "viernes", "sábados"];
+const DURACION_TIPICA = 110; // minutos, si no sabemos lo que duró
 
 const ASPECTOS: { clave: keyof Valoracion; etiqueta: string }[] = [
   { clave: "pantalla", etiqueta: "Pantalla" },
@@ -77,6 +90,39 @@ export function Estrellas({
   );
 }
 
+// "Entrada nº 3 de 2026": posición de la entrada dentro de su año
+function numeroEntrada(e: EntradaCine, entradas: EntradaCine[]): string {
+  const anyo = e.fecha.slice(0, 4);
+  const delAnyo = entradas
+    .filter((x) => x.fecha.startsWith(anyo))
+    .sort((a, b) => `${a.fecha} ${a.hora ?? ""}`.localeCompare(`${b.fecha} ${b.hora ?? ""}`));
+  return `Entrada nº ${delAnyo.findIndex((x) => x.id === e.id) + 1} de ${anyo}`;
+}
+
+function detalleEntrada(e: EntradaCine): string {
+  return [e.hora, e.sala && `Sala ${e.sala}`, e.butaca && `Butaca ${e.butaca}`, e.formato]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function useUrlFoto(e: EntradaCine | null): string | null {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!e?.tieneFoto) return setUrl(null);
+    let cancelado = false;
+    let creada: string | null = null;
+    urlFoto(e.id).then((u) => {
+      creada = u;
+      if (!cancelado) setUrl(u);
+    });
+    return () => {
+      cancelado = true;
+      if (creada) URL.revokeObjectURL(creada);
+    };
+  }, [e?.id, e?.tieneFoto]);
+  return url;
+}
+
 // ─── Formulario de entrada ────────────────────────────────────────────────────
 
 export function FormEntrada({
@@ -99,6 +145,15 @@ export function FormEntrada({
   const editando = !!inicial.id;
   const cambiar = (cambios: Partial<EntradaCine>) => setE((x) => ({ ...x, ...cambios }));
 
+  // Foto de la entrada: la guardada, una nueva elegida o quitada
+  const fotoGuardada = useUrlFoto(editando ? (inicial as EntradaCine) : null);
+  const [fotoNueva, setFotoNueva] = useState<File | null>(null);
+  const [fotoQuitada, setFotoQuitada] = useState(false);
+  const urlFotoNueva = useMemo(() => (fotoNueva ? URL.createObjectURL(fotoNueva) : null), [fotoNueva]);
+  const vistaFoto = urlFotoNueva ?? (fotoQuitada ? null : fotoGuardada);
+  const selectorFoto = useRef<HTMLInputElement>(null);
+  const [guardando, setGuardando] = useState(false);
+
   // El cine de la entrada siempre aparece en la lista, aunque hoy no tenga cartelera
   const opcionesCine = useMemo(() => {
     const lista = [...cines];
@@ -110,14 +165,31 @@ export function FormEntrada({
 
   const valida = !!e.pelicula?.trim() && !!e.cineId && !!e.fecha;
 
-  function guardar() {
-    if (!valida) return;
-    guardarEntrada({
+  async function guardar() {
+    if (!valida || guardando) return;
+    setGuardando(true);
+    const id = e.id ?? nuevoId();
+    let tieneFoto = !!e.tieneFoto && !fotoQuitada;
+    try {
+      if (fotoNueva) {
+        await guardarFoto(id, fotoNueva);
+        tieneFoto = true;
+      } else if (fotoQuitada) {
+        await borrarFoto(id);
+      }
+    } catch (error) {
+      console.error("guardarFoto", error);
+      alert("No se pudo guardar la foto; el resto de la entrada sí se guarda.");
+    }
+    const entrada: EntradaCine = {
       ...(e as EntradaCine),
-      id: e.id ?? nuevoId(),
+      id,
       pelicula: e.pelicula!.trim(),
+      tieneFoto,
       creadaEn: e.creadaEn ?? new Date().toISOString(),
-    });
+    };
+    guardarEntrada(entrada);
+    programarRecordatorio(entrada);
     onCerrar();
   }
 
@@ -183,6 +255,59 @@ export function FormEntrada({
             </div>
           </div>
 
+          {/* Foto de la entrada (QR) */}
+          <div>
+            <label className={etiqueta}>Tu entrada (captura del QR o foto)</label>
+            <input
+              ref={selectorFoto}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={async (x) => {
+                const entrada = x.target;
+                const archivo = entrada.files?.[0];
+                if (archivo) {
+                  try {
+                    // Copia en memoria: en Android el permiso para leer el
+                    // archivo elegido puede caducar antes de pulsar Guardar
+                    const copia = new File([await archivo.arrayBuffer()], archivo.name, {
+                      type: archivo.type || "image/jpeg",
+                    });
+                    setFotoNueva(copia);
+                    setFotoQuitada(false);
+                  } catch {
+                    alert("No se pudo abrir esa imagen. Prueba con otra.");
+                  }
+                }
+                entrada.value = "";
+              }}
+            />
+            {vistaFoto ? (
+              <div className="relative">
+                <img src={vistaFoto} alt="Tu entrada" className="max-h-64 w-full rounded-xl bg-white object-contain" />
+                <button
+                  aria-label="Quitar foto"
+                  onClick={() => {
+                    setFotoNueva(null);
+                    setFotoQuitada(true);
+                  }}
+                  className="absolute right-2 top-2 rounded-full bg-black/70 p-1.5 text-white"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => selectorFoto.current?.click()}
+                className={`flex w-full items-center justify-center gap-2 rounded-xl border border-dashed px-3 py-4 text-sm ${
+                  oscuro ? "border-zinc-700 text-zinc-400" : "border-zinc-300 text-zinc-500"
+                }`}
+              >
+                <Camera size={18} /> Añadir foto de la entrada
+              </button>
+            )}
+          </div>
+
           <div>
             <label className={etiqueta}>Tu experiencia (solo la ves tú)</label>
             <div className={`rounded-xl border p-3 space-y-2 ${oscuro ? "border-zinc-800" : "border-zinc-200"}`}>
@@ -235,6 +360,8 @@ export function FormEntrada({
               onClick={() => {
                 if (confirm("¿Borrar esta entrada?")) {
                   borrarEntrada(e.id!);
+                  borrarFoto(e.id!);
+                  cancelarRecordatorio(e.id!);
                   onCerrar();
                 }
               }}
@@ -245,10 +372,10 @@ export function FormEntrada({
           )}
           <button
             onClick={guardar}
-            disabled={!valida}
+            disabled={!valida || guardando}
             className="flex-1 rounded-xl bg-amber-500 px-4 py-3 text-sm font-bold text-black disabled:opacity-40"
           >
-            Guardar
+            {guardando ? "Guardando..." : "Guardar"}
           </button>
         </div>
       </div>
@@ -256,16 +383,158 @@ export function FormEntrada({
   );
 }
 
-// ─── Panel ────────────────────────────────────────────────────────────────────
+// ─── Ticket ───────────────────────────────────────────────────────────────────
 
-type Pestana = "calendario" | "entradas" | "cines";
+/** Una entrada con aspecto de ticket de cine */
+function Ticket({
+  e,
+  numero,
+  tema,
+  onAbrir,
+}: {
+  e: EntradaCine;
+  numero: string;
+  tema: Tema;
+  onAbrir?: () => void;
+}) {
+  const oscuro = tema === "oscuro";
+  const fondoPagina = oscuro ? "bg-black" : "bg-zinc-50";
+  return (
+    <button
+      onClick={onAbrir}
+      disabled={!onAbrir}
+      className="relative block w-full overflow-hidden rounded-2xl bg-gradient-to-br from-amber-400 to-orange-500 p-[2px] text-left"
+    >
+      <div className={`relative overflow-hidden rounded-[14px] ${oscuro ? "bg-zinc-900" : "bg-white"}`}>
+        {/* Póster de fondo, difuminado */}
+        {e.poster && (
+          <img
+            src={e.poster}
+            alt=""
+            className="absolute inset-0 h-full w-full scale-110 object-cover opacity-20 blur-md"
+          />
+        )}
+        <div className="relative flex gap-3 p-4">
+          <div className={`h-24 w-16 flex-shrink-0 overflow-hidden rounded-lg flex items-center justify-center ${oscuro ? "bg-zinc-800" : "bg-zinc-200"}`}>
+            {e.poster ? <img src={e.poster} alt="" className="h-full w-full object-cover" /> : <Film size={20} className="text-zinc-500" />}
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-amber-500">Entrada de cine</p>
+            <p className="mt-0.5 text-lg font-black leading-tight">{e.pelicula}</p>
+            <p className="mt-1 flex items-center gap-1 text-xs text-zinc-500">
+              <MapPin size={11} /> {e.cineNombre}
+            </p>
+          </div>
+        </div>
+        {/* Troquelado */}
+        <div className="relative h-0">
+          <span className={`absolute -left-3 -top-3 h-6 w-6 rounded-full ${fondoPagina}`} />
+          <span className={`absolute -right-3 -top-3 h-6 w-6 rounded-full ${fondoPagina}`} />
+          <div className="mx-4 border-t-2 border-dashed border-zinc-500/40" />
+        </div>
+        <div className="relative px-4 py-3">
+          <p className={`text-sm font-bold capitalize ${oscuro ? "text-amber-300" : "text-amber-700"}`}>
+            {fechaLarga(e.fecha)}
+          </p>
+          {detalleEntrada(e) && <p className="text-xs text-zinc-500">{detalleEntrada(e)}</p>}
+          <div className="mt-1 flex items-center justify-between gap-2">
+            <Estrellas valoracion={e.valoracion} compacto />
+            <span className="ml-auto text-[10px] text-zinc-500">{numero}</span>
+          </div>
+        </div>
+      </div>
+    </button>
+  );
+}
 
-export default function MiCine({
+/** Entrada a pantalla completa: ticket, foto del QR, compartir y editar */
+function VistaEntrada({
+  e,
+  numero,
   tema,
   onCerrar,
   onEditar,
 }: {
+  e: EntradaCine;
+  numero: string;
   tema: Tema;
+  onCerrar: () => void;
+  onEditar: () => void;
+}) {
+  useCerrarConAtras(true, onCerrar);
+  const oscuro = tema === "oscuro";
+  const foto = useUrlFoto(e);
+
+  async function compartir() {
+    try {
+      await compartirImagen(
+        dibujarTicket({
+          pelicula: e.pelicula,
+          cine: e.cineNombre,
+          fechaLarga: fechaLarga(e.fecha),
+          detalle: detalleEntrada(e),
+          numero,
+        }),
+        `entrada-${e.id}`,
+        `He visto «${e.pelicula}» en ${e.cineNombre} 🎬`,
+      );
+    } catch {
+      // Compartir cancelado
+    }
+  }
+
+  return (
+    <div className={`fixed inset-0 z-[75] overflow-y-auto ${oscuro ? "bg-black text-white" : "bg-zinc-50 text-zinc-900"}`}>
+      <div className="flex items-center justify-between px-4 py-3">
+        <button aria-label="Volver" onClick={onCerrar} className="p-1 text-zinc-500">
+          <ArrowLeft size={20} />
+        </button>
+        <div className="flex gap-2">
+          <button onClick={compartir} className="flex items-center gap-1.5 rounded-xl border border-amber-500/50 px-3 py-2 text-sm font-semibold text-amber-500">
+            <Share2 size={15} /> Compartir
+          </button>
+          <button onClick={onEditar} className="flex items-center gap-1.5 rounded-xl border border-zinc-500/40 px-3 py-2 text-sm font-semibold text-zinc-500">
+            <Pencil size={15} /> Editar
+          </button>
+        </div>
+      </div>
+      <div className="px-4 pb-10">
+        <Ticket e={e} numero={numero} tema={tema} />
+        {foto ? (
+          <div className="mt-5">
+            <p className="mb-2 text-center text-xs text-zinc-500">Muéstrala en la puerta del cine</p>
+            <img src={foto} alt="Tu entrada" className="w-full rounded-2xl bg-white object-contain" />
+          </div>
+        ) : (
+          <button
+            onClick={onEditar}
+            className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-zinc-500/40 p-5 text-sm text-zinc-500"
+          >
+            <Camera size={18} /> Añade la foto o captura del QR
+          </button>
+        )}
+        {e.nota && (
+          <div className={`mt-5 rounded-2xl border p-4 text-sm ${oscuro ? "bg-zinc-900 border-zinc-800" : "bg-white border-zinc-200"}`}>
+            {e.nota}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Panel ────────────────────────────────────────────────────────────────────
+
+type Pestana = "calendario" | "entradas" | "quiero" | "anyo";
+
+export default function MiCine({
+  tema,
+  urlDatos,
+  onCerrar,
+  onEditar,
+}: {
+  tema: Tema;
+  urlDatos: string;
   onCerrar: () => void;
   onEditar: (inicial: Partial<EntradaCine>) => void;
 }) {
@@ -273,21 +542,19 @@ export default function MiCine({
   const oscuro = tema === "oscuro";
   const { nombre, entradas } = useMiCine();
   const [pestana, setPestana] = useState<Pestana>("calendario");
+  const [abiertaId, setAbiertaId] = useState<string | null>(null);
+  const abierta = entradas.find((e) => e.id === abiertaId) ?? null;
 
   const anyoActual = fechaISO().slice(0, 4);
   const esteAnyo = entradas.filter((e) => e.fecha.startsWith(anyoActual));
-  const visitasPorCine = new Map<string, number>();
-  for (const e of esteAnyo) visitasPorCine.set(e.cineNombre, (visitasPorCine.get(e.cineNombre) ?? 0) + 1);
-  const favorito = [...visitasPorCine.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
-
   const tarjeta = oscuro ? "bg-zinc-900 border-zinc-800" : "bg-white border-zinc-200";
 
+  const ticket = (e: EntradaCine) => (
+    <Ticket key={e.id} e={e} numero={numeroEntrada(e, entradas)} tema={tema} onAbrir={() => setAbiertaId(e.id)} />
+  );
+
   return (
-    <div
-      className={`fixed inset-0 z-[60] overflow-y-auto ${
-        oscuro ? "bg-black text-white" : "bg-zinc-50 text-zinc-900"
-      }`}
-    >
+    <div className={`fixed inset-0 z-[60] overflow-y-auto ${oscuro ? "bg-black text-white" : "bg-zinc-50 text-zinc-900"}`}>
       <header
         className={`sticky top-0 z-10 border-b px-4 py-3 backdrop-blur-2xl ${
           oscuro ? "bg-black/80 border-white/5" : "bg-white/80 border-zinc-200"
@@ -307,13 +574,14 @@ export default function MiCine({
             [
               ["calendario", "Calendario"],
               ["entradas", "Entradas"],
-              ["cines", "Cines"],
+              ["quiero", "Quiero ver"],
+              ["anyo", "Mi año"],
             ] as [Pestana, string][]
           ).map(([p, texto]) => (
             <button
               key={p}
               onClick={() => setPestana(p)}
-              className={`flex-1 rounded-lg border px-3 py-2 text-sm font-semibold ${
+              className={`flex-1 rounded-lg border px-1 py-2 text-[13px] font-semibold ${
                 pestana === p
                   ? oscuro
                     ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
@@ -339,79 +607,59 @@ export default function MiCine({
           <p className="mt-1 text-sm text-zinc-500">
             {esteAnyo.length === 0
               ? `Aún no has guardado ninguna película en ${anyoActual}`
-              : `${esteAnyo.length} ${esteAnyo.length === 1 ? "película" : "películas"} en ${anyoActual}` +
-                (favorito ? ` · Tu cine: ${favorito}` : "")}
+              : `${esteAnyo.length} ${esteAnyo.length === 1 ? "película" : "películas"} en ${anyoActual}`}
           </p>
         </div>
 
-        {pestana === "calendario" && (
-          <Calendario entradas={entradas} tema={tema} onEditar={onEditar} />
-        )}
+        {pestana === "calendario" && <Calendario entradas={entradas} tema={tema} ticket={ticket} onEditar={onEditar} />}
         {pestana === "entradas" && (
-          <ListaEntradas entradas={entradas} tema={tema} onEditar={onEditar} />
+          <>
+            {entradas.length === 0 ? (
+              <p className="py-10 text-center text-sm text-zinc-500">
+                Aún no has guardado ninguna entrada. Toca una sesión de la cartelera y
+                elige "Guardar entrada", o usa "Añadir entrada".
+              </p>
+            ) : (
+              <div className="space-y-4">{entradas.map(ticket)}</div>
+            )}
+            <CopiaSeguridad tema={tema} />
+          </>
         )}
-        {pestana === "cines" && <Experiencias entradas={entradas} tema={tema} />}
-
-        {pestana === "entradas" && <CopiaSeguridad tema={tema} />}
+        {pestana === "quiero" && <QuieroVer tema={tema} urlDatos={urlDatos} />}
+        {pestana === "anyo" && <MiAnyo entradas={entradas} tema={tema} />}
       </main>
 
-      <button
-        onClick={() => onEditar({})}
-        className="fixed bottom-6 right-5 flex items-center gap-2 rounded-full bg-amber-500 px-5 py-3.5 text-sm font-bold text-black shadow-xl shadow-amber-500/30"
-      >
-        <Plus size={18} /> Añadir entrada
-      </button>
-    </div>
-  );
-}
+      {pestana !== "quiero" && (
+        <button
+          onClick={() => onEditar({})}
+          className="fixed bottom-6 right-5 flex items-center gap-2 rounded-full bg-amber-500 px-5 py-3.5 text-sm font-bold text-black shadow-xl shadow-amber-500/30"
+        >
+          <Plus size={18} /> Añadir entrada
+        </button>
+      )}
 
-function TarjetaEntrada({
-  e,
-  tema,
-  onEditar,
-}: {
-  e: EntradaCine;
-  tema: Tema;
-  onEditar: (inicial: Partial<EntradaCine>) => void;
-}) {
-  const oscuro = tema === "oscuro";
-  return (
-    <button
-      onClick={() => onEditar(e)}
-      className={`flex w-full gap-3 rounded-2xl border p-3 text-left ${
-        oscuro ? "bg-zinc-900 border-zinc-800" : "bg-white border-zinc-200"
-      }`}
-    >
-      <div className={`w-12 h-[72px] flex-shrink-0 overflow-hidden rounded-lg flex items-center justify-center ${oscuro ? "bg-zinc-800" : "bg-zinc-200"}`}>
-        {e.poster ? <img src={e.poster} alt="" className="w-full h-full object-cover" /> : <Film size={18} className="text-zinc-500" />}
-      </div>
-      <div className="min-w-0 flex-1">
-        <p className="font-bold leading-tight">{e.pelicula}</p>
-        <p className="mt-0.5 flex items-center gap-1 text-xs text-zinc-500">
-          <MapPin size={11} /> {e.cineNombre}
-        </p>
-        <p className="mt-0.5 text-xs text-zinc-500">
-          <span className="capitalize">{fechaLarga(e.fecha)}</span>
-          {e.hora && ` · ${e.hora}`}
-          {e.sala && ` · Sala ${e.sala}`}
-          {e.butaca && ` · ${e.butaca}`}
-        </p>
-        <div className="mt-1">
-          <Estrellas valoracion={e.valoracion} compacto />
-        </div>
-        {e.nota && <p className="mt-1 line-clamp-2 text-sm">{e.nota}</p>}
-      </div>
-    </button>
+      {abierta && (
+        <VistaEntrada
+          e={abierta}
+          numero={numeroEntrada(abierta, entradas)}
+          tema={tema}
+          onCerrar={() => setAbiertaId(null)}
+          onEditar={() => onEditar(abierta)}
+        />
+      )}
+    </div>
   );
 }
 
 function Calendario({
   entradas,
   tema,
+  ticket,
   onEditar,
 }: {
   entradas: EntradaCine[];
   tema: Tema;
+  ticket: (e: EntradaCine) => JSX.Element;
   onEditar: (inicial: Partial<EntradaCine>) => void;
 }) {
   const oscuro = tema === "oscuro";
@@ -496,7 +744,7 @@ function Calendario({
               Ese día no fuiste al cine. ¿Añadir una entrada?
             </button>
           ) : (
-            delDia.map((e) => <TarjetaEntrada key={e.id} e={e} tema={tema} onEditar={onEditar} />)
+            delDia.map(ticket)
           )}
         </div>
       )}
@@ -504,28 +752,212 @@ function Calendario({
   );
 }
 
-function ListaEntradas({
-  entradas,
-  tema,
-  onEditar,
-}: {
-  entradas: EntradaCine[];
-  tema: Tema;
-  onEditar: (inicial: Partial<EntradaCine>) => void;
-}) {
-  if (entradas.length === 0) {
-    return (
-      <p className="py-10 text-center text-sm text-zinc-500">
-        Aún no has guardado ninguna entrada. Toca una sesión de la cartelera y
-        elige "Guardar entrada", o usa "Añadir entrada".
-      </p>
-    );
+// ─── Quiero ver ───────────────────────────────────────────────────────────────
+
+interface PeliculaPublicada {
+  clave: string;
+  titulo: string;
+  fechas: string[];
+  cines: string[];
+}
+
+function QuieroVer({ tema, urlDatos }: { tema: Tema; urlDatos: string }) {
+  const oscuro = tema === "oscuro";
+  const { deseos } = useMiCine();
+  const [publicadas, setPublicadas] = useState<PeliculaPublicada[] | null>(null);
+  const [titulo, setTitulo] = useState("");
+
+  useEffect(() => {
+    fetch(`${urlDatos}/peliculas.json`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then(setPublicadas)
+      .catch(() => setPublicadas([]));
+  }, [urlDatos]);
+
+  // Misma regla que la app usa para unir títulos (sin la duración)
+  const enCartelera = (clave: string) =>
+    publicadas?.find((p) => {
+      if (p.clave === clave) return true;
+      const [corta, larga] = p.clave.length <= clave.length ? [p.clave, clave] : [clave, p.clave];
+      return (corta.length >= 12 && larga.includes(corta)) ||
+        (corta.length >= 6 && (larga.startsWith(corta) || larga.endsWith(corta)));
+    });
+
+  function anadir() {
+    const limpio = titulo.trim();
+    if (!limpio) return;
+    const clave = normalizarTitulo(limpio);
+    if (!deseos.some((d) => d.clave === clave)) {
+      alternarDeseo({ clave, titulo: limpio });
+      pedirPermisoAvisos();
+    }
+    setTitulo("");
   }
+
   return (
-    <div className="space-y-3">
-      {entradas.map((e) => (
-        <TarjetaEntrada key={e.id} e={e} tema={tema} onEditar={onEditar} />
-      ))}
+    <div>
+      <p className="mb-3 text-sm text-zinc-500">
+        Te avisaremos con una notificación cuando entren en cartelera. Añádelas desde la
+        ficha de una película o escribiendo el título de un próximo estreno.
+      </p>
+      <div className="mb-4 flex gap-2">
+        <input
+          value={titulo}
+          onChange={(x) => setTitulo(x.target.value)}
+          onKeyDown={(x) => x.key === "Enter" && anadir()}
+          placeholder="Título de la película"
+          className={`flex-1 rounded-xl border px-3 py-2.5 text-sm focus:outline-none ${
+            oscuro ? "bg-zinc-900 border-zinc-800 text-white" : "bg-white border-zinc-200"
+          }`}
+        />
+        <button onClick={anadir} disabled={!titulo.trim()} className="rounded-xl bg-amber-500 px-4 text-sm font-bold text-black disabled:opacity-40">
+          Añadir
+        </button>
+      </div>
+
+      {deseos.length === 0 ? (
+        <p className="py-8 text-center text-sm text-zinc-500">Tu lista está vacía.</p>
+      ) : (
+        <div className="space-y-3">
+          {deseos.map((d) => {
+            const publicada = enCartelera(d.clave);
+            return (
+              <div key={d.clave} className={`flex items-center gap-3 rounded-2xl border p-3 ${oscuro ? "bg-zinc-900 border-zinc-800" : "bg-white border-zinc-200"}`}>
+                <div className={`h-16 w-11 flex-shrink-0 overflow-hidden rounded-lg flex items-center justify-center ${oscuro ? "bg-zinc-800" : "bg-zinc-200"}`}>
+                  {d.poster ? <img src={d.poster} alt="" className="h-full w-full object-cover" /> : <Bookmark size={16} className="text-zinc-500" />}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="font-bold leading-tight">{d.titulo}</p>
+                  {publicadas === null ? (
+                    <p className="text-xs text-zinc-500">Comprobando…</p>
+                  ) : publicada ? (
+                    <p className={`text-xs font-semibold ${oscuro ? "text-amber-300" : "text-amber-700"}`}>
+                      En cartelera desde el <span className="capitalize">{fechaLarga(publicada.fechas[0])}</span> ·{" "}
+                      {publicada.cines.length} {publicada.cines.length === 1 ? "cine" : "cines"}
+                    </p>
+                  ) : (
+                    <p className="text-xs text-zinc-500">Aún no está en cartelera</p>
+                  )}
+                </div>
+                <button aria-label="Quitar de la lista" onClick={() => alternarDeseo(d)} className="p-1 text-zinc-500">
+                  <X size={18} />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Mi año en el cine ────────────────────────────────────────────────────────
+
+function masRepetido<T>(valores: T[]): [T, number] | null {
+  const cuenta = new Map<T, number>();
+  for (const v of valores) cuenta.set(v, (cuenta.get(v) ?? 0) + 1);
+  const [mejor] = [...cuenta.entries()].sort((a, b) => b[1] - a[1]);
+  return mejor ?? null;
+}
+
+function MiAnyo({ entradas, tema }: { entradas: EntradaCine[]; tema: Tema }) {
+  const oscuro = tema === "oscuro";
+  const anyos = Array.from(new Set([fechaISO().slice(0, 4), ...entradas.map((e) => e.fecha.slice(0, 4))])).sort();
+  const [anyo, setAnyo] = useState(anyos[anyos.length - 1]);
+  const delAnyo = entradas
+    .filter((e) => e.fecha.startsWith(anyo))
+    .sort((a, b) => a.fecha.localeCompare(b.fecha));
+
+  const minutos = delAnyo.reduce((n, e) => n + (e.duracion ?? DURACION_TIPICA), 0);
+  const estimado = delAnyo.some((e) => !e.duracion);
+  const cines = new Set(delAnyo.map((e) => e.cineNombre));
+  const vose = delAnyo.filter((e) => e.formato?.toUpperCase().includes("VOSE")).length;
+
+  const cineFavorito = masRepetido(delAnyo.map((e) => e.cineNombre));
+  const salaFavorita = masRepetido(delAnyo.filter((e) => e.sala).map((e) => `la sala ${e.sala} de ${e.cineNombre}`));
+  const mesFavorito = masRepetido(delAnyo.map((e) => Number(e.fecha.slice(5, 7)) - 1));
+  const generoFavorito = masRepetido(delAnyo.flatMap((e) => generosDe(e.genero)));
+  const diaFavorito = masRepetido(
+    delAnyo.map((e) => {
+      const [a, m, d] = e.fecha.split("-").map(Number);
+      return new Date(a, m - 1, d).getDay();
+    }),
+  );
+
+  const cifras: [string, string][] = [
+    [String(delAnyo.length), delAnyo.length === 1 ? "película" : "películas"],
+    [`${estimado ? "≈" : ""}${Math.round(minutos / 60)} h`, "en la butaca"],
+    [String(cines.size), cines.size === 1 ? "cine" : "cines distintos"],
+    [String(vose), "en versión original"],
+  ];
+  const frases = [
+    cineFavorito && `Tu cine: ${cineFavorito[0]} (${cineFavorito[1]} ${cineFavorito[1] === 1 ? "vez" : "veces"})`,
+    salaFavorita && salaFavorita[1] > 1 && `Tu sitio: ${salaFavorita[0]}`,
+    generoFavorito && `Lo que más ves: ${generoFavorito[0].toLowerCase()}`,
+    mesFavorito && `Tu mes más cinéfilo: ${MESES[mesFavorito[0]]}`,
+    diaFavorito && `Te gustan los ${DIAS_SEMANA[diaFavorito[0]]}`,
+    delAnyo[0] && `Empezaste el año con «${delAnyo[0].pelicula}»`,
+  ].filter(Boolean) as string[];
+
+  async function compartir() {
+    try {
+      await compartirImagen(dibujarResumen({ anyo, cifras, frases }), `mi-anyo-${anyo}`, `Mi año en el cine ${anyo} 🎬`);
+    } catch {
+      // Compartir cancelado
+    }
+  }
+
+  return (
+    <div>
+      <div className="mb-3 flex items-center justify-between">
+        <button
+          aria-label="Año anterior"
+          disabled={anyos.indexOf(anyo) <= 0}
+          onClick={() => setAnyo(anyos[anyos.indexOf(anyo) - 1])}
+          className="p-1 text-zinc-500 disabled:opacity-30"
+        >
+          <ChevronLeft size={20} />
+        </button>
+        <h2 className="text-lg font-black">
+          Mi año en el cine <span className="text-amber-500">{anyo}</span>
+        </h2>
+        <button
+          aria-label="Año siguiente"
+          disabled={anyos.indexOf(anyo) >= anyos.length - 1}
+          onClick={() => setAnyo(anyos[anyos.indexOf(anyo) + 1])}
+          className="p-1 text-zinc-500 disabled:opacity-30"
+        >
+          <ChevronRight size={20} />
+        </button>
+      </div>
+
+      {delAnyo.length === 0 ? (
+        <p className="py-8 text-center text-sm text-zinc-500">
+          Guarda tus entradas y aquí verás tu resumen del año.
+        </p>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-3">
+            {cifras.map(([valor, etiqueta]) => (
+              <div key={etiqueta} className={`rounded-2xl border p-4 ${oscuro ? "bg-zinc-900 border-zinc-800" : "bg-white border-zinc-200"}`}>
+                <p className="text-3xl font-black text-amber-500">{valor}</p>
+                <p className="text-xs text-zinc-500">{etiqueta}</p>
+              </div>
+            ))}
+          </div>
+          <ul className={`mt-3 space-y-2 rounded-2xl border p-4 text-sm ${oscuro ? "bg-zinc-900 border-zinc-800" : "bg-white border-zinc-200"}`}>
+            {frases.map((f) => (
+              <li key={f}>{f}</li>
+            ))}
+          </ul>
+          <button onClick={compartir} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-amber-500 px-4 py-3 text-sm font-bold text-black">
+            <Share2 size={16} /> Compartir mi año
+          </button>
+        </>
+      )}
+
+      <h3 className="mb-3 mt-8 font-black">Tus cines</h3>
+      <Experiencias entradas={entradas} tema={tema} />
     </div>
   );
 }
@@ -538,7 +970,7 @@ function Experiencias({ entradas, tema }: { entradas: EntradaCine[]; tema: Tema 
   const cines = [...porCine.entries()].sort((a, b) => b[1].length - a[1].length);
 
   if (cines.length === 0) {
-    return <p className="py-10 text-center text-sm text-zinc-500">Aquí verás tus experiencias en cada cine.</p>;
+    return <p className="py-6 text-center text-sm text-zinc-500">Aquí verás tus experiencias en cada cine.</p>;
   }
 
   const media = (lista: EntradaCine[], clave: keyof Valoracion) => {
@@ -558,7 +990,7 @@ function Experiencias({ entradas, tema }: { entradas: EntradaCine[]; tema: Tema 
         return (
           <div key={cine} className={`rounded-2xl border p-4 ${oscuro ? "bg-zinc-900 border-zinc-800" : "bg-white border-zinc-200"}`}>
             <div className="flex items-baseline justify-between gap-2">
-              <h3 className="font-black">{cine}</h3>
+              <h4 className="font-black">{cine}</h4>
               <span className="text-xs text-zinc-500">
                 {lista.length} {lista.length === 1 ? "visita" : "visitas"}
               </span>
@@ -596,7 +1028,7 @@ function CopiaSeguridad({ tema }: { tema: Tema }) {
     const copia = exportarMiCine();
     try {
       await navigator.clipboard.writeText(copia);
-      setMensaje("Copia copiada. Guárdala en una nota o envíatela.");
+      setMensaje("Copia copiada. Guárdala en una nota o envíatela. (Las fotos de las entradas no se incluyen.)");
     } catch {
       setTexto(copia);
       setMensaje("Copia este texto y guárdalo en un lugar seguro.");

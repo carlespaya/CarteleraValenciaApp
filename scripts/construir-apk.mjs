@@ -78,8 +78,19 @@ if (!datosLocales) {
 ejecutar("npx cap sync android");
 
 // 3. Compilar el APK con Gradle
+// Java 21, que es el que piden los plugins: el de JAVA_HOME, el que Gradle
+// descargó en ~/.gradle/jdks o, si no hay, el de Android Studio
+function buscarJava21() {
+  const dir = path.join(os.homedir(), ".gradle", "jdks");
+  if (!fs.existsSync(dir)) return undefined;
+  const jdk = fs
+    .readdirSync(dir)
+    .find((n) => /-21-/.test(n) && fs.existsSync(path.join(dir, n, "bin")));
+  return jdk && path.join(dir, jdk);
+}
 const javaHome =
   process.env.JAVA_HOME ??
+  buscarJava21() ??
   (esWindows ? "C:\\Program Files\\Android\\Android Studio\\jbr" : undefined);
 const androidHome =
   process.env.ANDROID_HOME ??

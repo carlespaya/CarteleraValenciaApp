@@ -1,17 +1,22 @@
 {
   "name": "cartelera-valencia-app",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "cartelera": "tsx scripts/generar-cartelera.ts",
     "build": "next build",
-    "apk": "node scripts/construir-apk.mjs"
+    "apk": "node scripts/construir-apk.mjs",
+    "datos-pc": "node scripts/subir-datos-pc.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.6.2",
     "@capacitor/app": "^8.1.2",
+    "@capacitor/background-runner": "^3.0.0",
     "@capacitor/core": "^8.6.2",
+    "@capacitor/filesystem": "^8.1.5",
+    "@capacitor/local-notifications": "^8.3.1",
+    "@capacitor/share": "^8.0.3",
     "cheerio": "^1.2.0",
     "lucide-react": "^0.383.0",
     "next": "^14.2.35",

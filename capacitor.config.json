@@ -5,5 +5,18 @@
   "backgroundColor": "#000000",
   "android": {
     "backgroundColor": "#000000"
+  },
+  "plugins": {
+    "BackgroundRunner": {
+      "label": "es.cinevalencia.app.avisos",
+      "src": "runners/avisos.js",
+      "event": "comprobar",
+      "repeat": true,
+      "interval": 180,
+      "autoStart": true
+    },
+    "LocalNotifications": {
+      "iconColor": "#F59E0B"
+    }
   }
 }
