@@ -10,13 +10,13 @@ import {
   Ticket,
   X,
   Star,
+  Sun,
+  Moon,
+  Calendar,
   ChevronDown,
   ArrowLeft,
   Navigation,
   LocateFixed,
-  Sun,
-  Moon,
-  Calendar,
 } from "lucide-react";
 import type { CartelCine, Sesion } from "@/types";
 import { obtenerPrecioSesion } from "@/lib/obtenerPrecioSesion";
@@ -30,6 +30,9 @@ import {
 
 // Dónde están los JSON de la cartelera (uno por día): en la web, junto a la
 // propia página; en la app Android, en la web publicada.
+// true al compilar la app Android (scripts/construir-apk.mjs): diseño compacto
+const ES_APP = process.env.NEXT_PUBLIC_APP === "1";
+
 const URL_DATOS =
   process.env.NEXT_PUBLIC_DATOS_URL ||
   `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/datos`;
@@ -1739,27 +1742,31 @@ export default function Cartelera({
   // ─── Tema claro/oscuro ────────────────────────────────────────────────────
   const [tema, setTema] = useState<Tema>("oscuro");
 
-  // Al montar: recuperamos la preferencia guardada, o si no hay ninguna,
-  // respetamos la preferencia del sistema operativo/navegador.
+  // App: el tema sigue siempre al del dispositivo (y cambia si se cambia).
+  // Web: se respeta la preferencia guardada o, si no hay, la del sistema.
   useEffect(() => {
+    const consulta = window.matchMedia?.("(prefers-color-scheme: light)");
+    if (ES_APP) {
+      if (!consulta) return;
+      const aplicar = () => setTema(consulta.matches ? "claro" : "oscuro");
+      aplicar();
+      consulta.addEventListener?.("change", aplicar);
+      return () => consulta.removeEventListener?.("change", aplicar);
+    }
     const guardado = localStorage.getItem("cinevalencia-tema");
     if (guardado === "claro" || guardado === "oscuro") {
       setTema(guardado);
-    } else if (
-      window.matchMedia &&
-      window.matchMedia("(prefers-color-scheme: light)").matches
-    ) {
+    } else if (consulta?.matches) {
       setTema("claro");
     }
   }, []);
 
-  // Cada vez que cambia el tema, lo persistimos
-  useEffect(() => {
-    localStorage.setItem("cinevalencia-tema", tema);
-  }, [tema]);
-
   function alternarTema() {
-    setTema((t) => (t === "oscuro" ? "claro" : "oscuro"));
+    setTema((t) => {
+      const nuevo = t === "oscuro" ? "claro" : "oscuro";
+      localStorage.setItem("cinevalencia-tema", nuevo);
+      return nuevo;
+    });
   }
 
   const esOscuro = tema === "oscuro";
@@ -1865,7 +1872,7 @@ export default function Cartelera({
     if (!datosIniciales) setCineSeleccionado(DATOS_EJEMPLO[0]?.cine.id ?? "");
   }, []);
 
-  // Título de la fecha seleccionada (largo, para el encabezado)
+  // Título de la fecha seleccionada (largo, para el encabezado de la web)
   const tituloFecha = useMemo(() => {
     const [anyo, mes, dia] = fechaSeleccionada.split("-").map(Number);
     const d = new Date(anyo, mes - 1, dia);
@@ -1886,158 +1893,341 @@ export default function Cartelera({
     [carteles],
   );
 
-  return (
-    <div
-      className={`min-h-screen selection:bg-amber-400 selection:text-black ${
-        esOscuro ? "bg-black text-white" : "bg-zinc-50 text-zinc-900"
-      }`}
-    >
-      {/* Header */}
-      <header className="sticky top-0 z-50">
-        {/* Fondo desenfocado */}
-        <div
-          className={`absolute inset-0 backdrop-blur-2xl border-b ${
-            esOscuro
-              ? "bg-black/70 border-white/5"
-              : "bg-white/70 border-zinc-200"
+  // Texto del botón de ubicación (solo icono: va en la etiqueta accesible)
+  const textoUbicacion =
+    estadoUbicacion === "concedido"
+      ? "Ordenado por cercanía"
+      : estadoUbicacion === "cargando"
+        ? "Localizando..."
+        : estadoUbicacion === "denegado"
+          ? "Permiso denegado"
+          : "Cines cerca de ti";
+
+
+  // ─── Diseño: la app Android es más compacta que la web ────────────────────
+  // App: cabecera mínima (título + ubicación + actualizar), fechas y vista.
+  const cabeceraApp = (
+    <>
+        {/* Cabecera fija: título y acciones, fechas y tipo de vista */}
+        <header
+          className={`sticky top-0 z-50 backdrop-blur-2xl border-b ${
+            esOscuro ? "bg-black/80 border-white/5" : "bg-white/80 border-zinc-200"
           }`}
-        />
-
-        {/* Brillo superior */}
-        <div className="absolute inset-0 bg-gradient-to-r from-amber-500/5 via-transparent to-blue-500/5" />
-
-        <div className="relative max-w-6xl mx-auto px-6 py-5">
-          <div className="flex items-center justify-between">
-            {/* Logo */}
-            <div className="flex items-center gap-4">
-              <div
-                className="
-                h-12
-                w-12
-                rounded-2xl
-                bg-gradient-to-br
-                from-amber-400
-                to-orange-500
-                flex
-                items-center
-                justify-center
-                shadow-xl
-                shadow-amber-500/30
-                "
+        >
+          <div className="max-w-7xl mx-auto px-4 py-3">
+            <div className="flex items-center justify-between gap-3">
+              <h1
+                className={`text-xl font-black tracking-tight ${
+                  esOscuro ? "text-white" : "text-zinc-900"
+                }`}
               >
-                <Film size={22} className="text-black" />
-              </div>
+                Cine
+                <span className={esOscuro ? "text-amber-400" : "text-amber-600"}>
+                  Valencia
+                </span>
+              </h1>
 
-              <div>
-                <h1
-                  className={`
-                  text-2xl
-                  font-black
-                  tracking-tight
-                  ${esOscuro ? "text-white" : "text-zinc-900"}
-                  `}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={pedirUbicacion}
+                  disabled={estadoUbicacion === "cargando"}
+                  aria-label={textoUbicacion}
+                  title={textoUbicacion}
+                  className={`rounded-xl border p-2.5 transition-colors disabled:opacity-50 ${
+                    estadoUbicacion === "concedido"
+                      ? esOscuro
+                        ? "bg-blue-500/15 text-blue-300 border-blue-500/30"
+                        : "bg-blue-50 text-blue-700 border-blue-300"
+                      : esOscuro
+                        ? "border-white/10 bg-white/5 text-zinc-300 hover:text-blue-300 hover:border-blue-500/30"
+                        : "border-zinc-200 bg-zinc-100 text-zinc-600 hover:text-blue-600 hover:border-blue-400/50"
+                  }`}
                 >
-                  Cine
-                  <span
-                    className={esOscuro ? "text-amber-400" : "text-amber-600"}
-                  >
-                    Valencia
-                  </span>
-                </h1>
+                  <LocateFixed
+                    size={16}
+                    className={
+                      estadoUbicacion === "cargando" ? "animate-pulse" : ""
+                    }
+                  />
+                </button>
 
-                <p className="text-sm text-zinc-500">
-                  Todos los cines en una sola aplicación
-                </p>
+                <button
+                  onClick={lanzarScraper}
+                  disabled={scrapeando || cargando}
+                  aria-label="Actualizar cartelera"
+                  title="Actualizar cartelera"
+                  className={`rounded-xl border p-2.5 transition-colors disabled:opacity-40 ${
+                    esOscuro
+                      ? "border-white/10 bg-white/5 text-zinc-300 hover:border-amber-400/30 hover:bg-amber-500/10"
+                      : "border-zinc-200 bg-zinc-100 text-zinc-600 hover:border-amber-400/40 hover:bg-amber-50"
+                  }`}
+                >
+                  <RefreshCw
+                    size={16}
+                    className={scrapeando ? "animate-spin" : ""}
+                  />
+                </button>
               </div>
             </div>
 
-            {/* Botones: actualizar + tema */}
-            <div className="flex items-center gap-3">
-              <button
-                onClick={lanzarScraper}
-                disabled={scrapeando || cargando}
-                className={`
-                rounded-xl
-                border
-                backdrop-blur
-                px-4
-                py-3
-                flex
-                items-center
-                gap-2
-                transition-all
-                duration-300
-                disabled:opacity-40
-                ${
-                  esOscuro
-                    ? "border-white/10 bg-white/5 hover:border-amber-400/30 hover:bg-amber-500/10"
-                    : "border-zinc-200 bg-zinc-100 hover:border-amber-400/40 hover:bg-amber-50"
-                }
-                `}
-              >
-                <RefreshCw
-                  size={16}
-                  className={scrapeando ? "animate-spin" : ""}
-                />
+            {/* ─── Barra de fechas ──────────────────────────────────────────── */}
+            <div className="mt-3 -mx-1 overflow-x-auto scrollbar-none">
+              <div className="flex gap-2 px-1 pb-1 min-w-max">
+                {FECHAS_DISPONIBLES.map((fecha) => {
+                  const { diaSemana, dia, mes, esHoy } = parsearFechaISO(fecha);
+                  const activa = fecha === fechaSeleccionada;
+                  const cargada = fechasCargadas.has(fecha);
 
-                <span className="font-medium text-sm">
-                  {scrapeando ? "Actualizando..." : "Actualizar"}
-                </span>
-              </button>
+                  return (
+                    <button
+                      key={fecha}
+                      onClick={() => seleccionarFecha(fecha)}
+                      className={`relative flex flex-col items-center gap-0.5 px-3 py-2 rounded-xl border text-center transition-all duration-200 min-w-[52px]
+                        ${
+                          activa
+                            ? esOscuro
+                              ? "bg-amber-500/20 border-amber-400/50 text-amber-300 shadow-lg shadow-amber-500/10"
+                              : "bg-amber-100 border-amber-400 text-amber-700 shadow-lg shadow-amber-200/60"
+                            : esOscuro
+                              ? "bg-zinc-900/60 border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200"
+                              : "bg-zinc-100 border-zinc-200 text-zinc-500 hover:border-zinc-400 hover:text-zinc-700"
+                        }`}
+                    >
+                      {/* Punto indicador de datos cargados */}
+                      {cargada && !activa && (
+                        <span
+                          className={`absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full ${
+                            esOscuro ? "bg-amber-500/60" : "bg-amber-400"
+                          }`}
+                        />
+                      )}
 
-              <button
-                onClick={alternarTema}
-                aria-label={
-                  esOscuro ? "Cambiar a modo claro" : "Cambiar a modo oscuro"
-                }
-                title={esOscuro ? "Modo claro" : "Modo oscuro"}
-                className={`
-                rounded-xl
-                border
-                backdrop-blur
-                p-3
-                flex
-                items-center
-                justify-center
-                transition-all
-                duration-300
-                ${
-                  esOscuro
-                    ? "border-white/10 bg-white/5 hover:border-amber-400/30 hover:bg-amber-500/10"
-                    : "border-zinc-200 bg-zinc-100 hover:border-amber-400/40 hover:bg-amber-50"
-                }
-                `}
-              >
-                {esOscuro ? (
-                  <Sun size={16} className="text-amber-400" />
-                ) : (
-                  <Moon size={16} className="text-amber-600" />
-                )}
-              </button>
+                      <span className="text-[10px] font-semibold uppercase tracking-wider opacity-70">
+                        {esHoy ? "Hoy" : diaSemana}
+                      </span>
+                      <span
+                        className={`text-lg font-black leading-none ${
+                          activa
+                            ? ""
+                            : esOscuro
+                              ? "text-zinc-200"
+                              : "text-zinc-700"
+                        }`}
+                      >
+                        {dia}
+                      </span>
+                      <span className="text-[10px] opacity-60">{mes}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Películas / Por cine */}
+            <div
+              className={`mt-3 flex gap-1 p-1 border rounded-xl ${
+                esOscuro
+                  ? "bg-zinc-900 border-zinc-800"
+                  : "bg-zinc-100 border-zinc-200"
+              }`}
+            >
+              {(["pelicula", "cine"] as Vista[]).map((v) => (
+                <button
+                  key={v}
+                  onClick={() => setVista(v)}
+                  className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all
+                    ${
+                      vista === v
+                        ? esOscuro
+                          ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
+                          : "bg-amber-100 text-amber-700 border border-amber-400"
+                        : esOscuro
+                          ? "text-zinc-500 hover:text-zinc-300 border border-transparent"
+                          : "text-zinc-500 hover:text-zinc-700 border border-transparent"
+                    }`}
+                >
+                  {v === "cine" ? (
+                    <>
+                      <Ticket size={13} /> Por cine
+                    </>
+                  ) : (
+                    <>
+                      <Film size={13} /> Películas
+                    </>
+                  )}
+                </button>
+              ))}
             </div>
           </div>
-        </div>
-      </header>
+        </header>
+    </>
+  );
+  const controlesApp = (
+    <>
+        {/* Buscador */}
+        {vista === "pelicula" && (
+          <div className="relative mb-4">
+            <Search
+              size={15}
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500"
+            />
+            <input
+              type="text"
+              value={busqueda}
+              onChange={(e) => setBusqueda(e.target.value)}
+              placeholder="Buscar película..."
+              className={`w-full border rounded-xl pl-9 pr-10 py-3 text-sm backdrop-blur-md transition-all focus:outline-none ${
+                esOscuro
+                  ? "bg-white/5 border-white/10 text-white placeholder-zinc-500 focus:border-amber-400/50 focus:bg-white/10"
+                  : "bg-zinc-100 border-zinc-200 text-zinc-900 placeholder-zinc-400 focus:border-amber-400/60 focus:bg-zinc-50"
+              }`}
+            />
+            {busqueda && (
+              <button
+                onClick={() => setBusqueda("")}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300"
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+        )}
+    </>
+  );
 
-      <div
-        className={`fixed inset-0 -z-50 overflow-hidden ${
-          esOscuro ? "bg-black" : "bg-zinc-50"
-        }`}
-      >
-        {/* Gradientes desenfocados para dar profundidad */}
-        <div
-          className={`absolute top-[-10%] left-[-10%] w-[50%] h-[50%] blur-[120px] rounded-full ${
-            esOscuro ? "bg-amber-900/20" : "bg-amber-200/40"
-          }`}
-        />
-        <div
-          className={`absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] blur-[120px] rounded-full ${
-            esOscuro ? "bg-blue-900/20" : "bg-blue-200/40"
-          }`}
-        />
-      </div>
+  // Web: diseño original con logo, botón de tema y título de la fecha.
+  const cabeceraWeb = (
+    <>
+        {/* Header */}
+        <header className="sticky top-0 z-50">
+          {/* Fondo desenfocado */}
+          <div
+            className={`absolute inset-0 backdrop-blur-2xl border-b ${
+              esOscuro
+                ? "bg-black/70 border-white/5"
+                : "bg-white/70 border-zinc-200"
+            }`}
+          />
 
-      <main className="max-w-7xl mx-auto px-4 pt-6 pb-16">
+          {/* Brillo superior */}
+          <div className="absolute inset-0 bg-gradient-to-r from-amber-500/5 via-transparent to-blue-500/5" />
+
+          <div className="relative max-w-6xl mx-auto px-6 py-5">
+            <div className="flex items-center justify-between">
+              {/* Logo */}
+              <div className="flex items-center gap-4">
+                <div
+                  className="
+                  h-12
+                  w-12
+                  rounded-2xl
+                  bg-gradient-to-br
+                  from-amber-400
+                  to-orange-500
+                  flex
+                  items-center
+                  justify-center
+                  shadow-xl
+                  shadow-amber-500/30
+                  "
+                >
+                  <Film size={22} className="text-black" />
+                </div>
+
+                <div>
+                  <h1
+                    className={`
+                    text-2xl
+                    font-black
+                    tracking-tight
+                    ${esOscuro ? "text-white" : "text-zinc-900"}
+                    `}
+                  >
+                    Cine
+                    <span
+                      className={esOscuro ? "text-amber-400" : "text-amber-600"}
+                    >
+                      Valencia
+                    </span>
+                  </h1>
+
+                  <p className="text-sm text-zinc-500">
+                    Todos los cines en una sola aplicación
+                  </p>
+                </div>
+              </div>
+
+              {/* Botones: actualizar + tema */}
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={lanzarScraper}
+                  disabled={scrapeando || cargando}
+                  className={`
+                  rounded-xl
+                  border
+                  backdrop-blur
+                  px-4
+                  py-3
+                  flex
+                  items-center
+                  gap-2
+                  transition-all
+                  duration-300
+                  disabled:opacity-40
+                  ${
+                    esOscuro
+                      ? "border-white/10 bg-white/5 hover:border-amber-400/30 hover:bg-amber-500/10"
+                      : "border-zinc-200 bg-zinc-100 hover:border-amber-400/40 hover:bg-amber-50"
+                  }
+                  `}
+                >
+                  <RefreshCw
+                    size={16}
+                    className={scrapeando ? "animate-spin" : ""}
+                  />
+
+                  <span className="font-medium text-sm">
+                    {scrapeando ? "Actualizando..." : "Actualizar"}
+                  </span>
+                </button>
+
+                <button
+                  onClick={alternarTema}
+                  aria-label={
+                    esOscuro ? "Cambiar a modo claro" : "Cambiar a modo oscuro"
+                  }
+                  title={esOscuro ? "Modo claro" : "Modo oscuro"}
+                  className={`
+                  rounded-xl
+                  border
+                  backdrop-blur
+                  p-3
+                  flex
+                  items-center
+                  justify-center
+                  transition-all
+                  duration-300
+                  ${
+                    esOscuro
+                      ? "border-white/10 bg-white/5 hover:border-amber-400/30 hover:bg-amber-500/10"
+                      : "border-zinc-200 bg-zinc-100 hover:border-amber-400/40 hover:bg-amber-50"
+                  }
+                  `}
+                >
+                  {esOscuro ? (
+                    <Sun size={16} className="text-amber-400" />
+                  ) : (
+                    <Moon size={16} className="text-amber-600" />
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </header>
+    </>
+  );
+  const controlesWeb = (
+    <>
         {/* Título */}
         <div className="mb-5">
           <p className="text-zinc-500 text-xs uppercase tracking-widest mb-1 flex items-center gap-1.5">
@@ -2217,6 +2407,38 @@ export default function Cartelera({
             )}
           </div>
         </div>
+    </>
+  );
+
+  return (
+    <div
+      className={`min-h-screen selection:bg-amber-400 selection:text-black ${
+        esOscuro ? "bg-black text-white" : "bg-zinc-50 text-zinc-900"
+      }`}
+    >
+      {ES_APP ? cabeceraApp : cabeceraWeb}
+
+      <div
+        className={`fixed inset-0 -z-50 overflow-hidden ${
+          esOscuro ? "bg-black" : "bg-zinc-50"
+        }`}
+      >
+        {/* Gradientes desenfocados para dar profundidad */}
+        <div
+          className={`absolute top-[-10%] left-[-10%] w-[50%] h-[50%] blur-[120px] rounded-full ${
+            esOscuro ? "bg-amber-900/20" : "bg-amber-200/40"
+          }`}
+        />
+        <div
+          className={`absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] blur-[120px] rounded-full ${
+            esOscuro ? "bg-blue-900/20" : "bg-blue-200/40"
+          }`}
+        />
+      </div>
+
+      <main className={`max-w-7xl mx-auto px-4 ${ES_APP ? "pt-4" : "pt-6"} pb-16`}>
+        {ES_APP ? controlesApp : controlesWeb}
+
 
         {/* Alertas de Ubicación */}
         {estadoUbicacion === "denegado" && (

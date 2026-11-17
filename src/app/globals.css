@@ -26,6 +26,14 @@
     color: #fbbf24;
   }
 
+  /* Listas que se desplazan en horizontal (barra de fechas) sin barra visible */
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+
   ::-webkit-scrollbar {
     width: 4px;
   }

@@ -13,8 +13,8 @@
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:background">@null</item>
-        <!-- Zona de las barras del sistema en negro, como la cabecera de la web -->
-        <item name="android:windowBackground">@android:color/black</item>
+        <!-- Zona de las barras del sistema: clara u oscura según el tema del móvil -->
+        <item name="android:windowBackground">@color/fondo_app</item>
     </style>
 
 

@@ -45,7 +45,12 @@ console.log(`La app leerá la cartelera de: ${urlDatos}`);
 
 // 1. Web estática para la app: sin subcarpeta y con la URL de los datos
 ejecutar("npx next build", {
-  env: { ...process.env, NEXT_PUBLIC_BASE_PATH: "", NEXT_PUBLIC_DATOS_URL: urlDatos },
+  env: {
+    ...process.env,
+    NEXT_PUBLIC_APP: "1", // diseño compacto de la app
+    NEXT_PUBLIC_BASE_PATH: "",
+    NEXT_PUBLIC_DATOS_URL: urlDatos,
+  },
 });
 if (!datosLocales) {
   // Los JSON se descargan de internet: no hace falta meterlos en el APK
