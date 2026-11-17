@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useContext } from "react";
 import {
   MapPin,
   Clock,
@@ -10,6 +10,7 @@ import {
   Ticket,
   X,
   Download,
+  UserRound,
   Star,
   Sun,
   Moon,
@@ -20,7 +21,15 @@ import {
   LocateFixed,
 } from "lucide-react";
 import type { CartelCine, Sesion } from "@/types";
-import { obtenerPrecioSesion } from "@/lib/obtenerPrecioSesion";
+import { tarifasDeSesion } from "@/lib/obtenerPrecioSesion";
+import HojaSesion, { AccionSesionContext, type FichaSesion } from "./HojaSesion";
+import MiCine, { FormEntrada } from "./MiCine";
+import type { EntradaCine } from "@/lib/miCine";
+import {
+  decodificarEntidadesHtml,
+  esMismaPelicula,
+  normalizarTitulo,
+} from "@/lib/titulos";
 import {
   DIAS_CARTELERA,
   fechaISO,
@@ -108,76 +117,7 @@ interface CartelEnriquecido {
 // distintos según el cine/fuente de datos (mayúsculas, coletillas de
 // formato, entidades HTML sin decodificar, prefijos de saga, traducciones) ──
 
-// Diccionario de alias/traducciones conocidas entre fuentes (ES/EN, etc.).
-// Si detectas otra película duplicada por usar una palabra distinta en cada
-// cine, añade aquí una entrada nueva: "palabra_en_una_fuente": "palabra_en_otra".
-const ALIAS_TRADUCCION: Record<string, string> = {
-  monstruos: "monsters",
-};
 
-// Longitud mínima (ya normalizada) que debe tener el título más corto para
-// fusionarlo dentro de otro que lo contenga por completo. Evita falsos
-// positivos entre películas distintas con nombres cortos (ej. "Alien" no se
-// fusiona con "Alien: Romulus" porque "alien" es demasiado corto).
-const UMBRAL_CONTENCION = 12;
-
-function decodificarEntidadesHtml(texto: string): string {
-  if (!texto) return texto;
-  const entidades: Record<string, string> = {
-    "&amp;": "&",
-    "&quot;": '"',
-    "&#39;": "'",
-    "&apos;": "'",
-    "&lt;": "<",
-    "&gt;": ">",
-    "&nbsp;": " ",
-  };
-  return texto.replace(
-    /&amp;|&quot;|&#39;|&apos;|&lt;|&gt;|&nbsp;/g,
-    (m) => entidades[m] ?? m,
-  );
-}
-
-function normalizarTitulo(tituloOriginal: string): string {
-  let t = decodificarEntidadesHtml(tituloOriginal)
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, ""); // Quitar acentos
-
-  // Quitar contenido entre paréntesis o corchetes: (2026), [3D], etc.
-  t = t.replace(/\(.*?\)/g, "").replace(/\[.*?\]/g, "");
-
-  // Quitar coletillas de formato/versión que no forman parte del título real
-  const palabrasSucias = [
-    "3d",
-    "4dx",
-    "imax",
-    "atmos",
-    "vose",
-    "vosi",
-    "vo",
-    "ve",
-    "hd",
-    "live action",
-    "live-action",
-    "digital",
-    "screenx",
-    "laser",
-  ];
-  palabrasSucias.forEach((palabra) => {
-    const regex = new RegExp(`\\b${palabra}\\b`, "gi");
-    t = t.replace(regex, "");
-  });
-
-  t = t.replace(/&/g, "y").replace(/[^a-z0-9]/g, "");
-
-  // Aplicar alias de traducción conocidos para unificar variantes ES/EN
-  for (const [origen, destino] of Object.entries(ALIAS_TRADUCCION)) {
-    t = t.split(origen).join(destino);
-  }
-
-  return t.trim();
-}
 
 function tieneColetilla(titulo: string): boolean {
   const t = titulo.toLowerCase();
@@ -508,120 +448,24 @@ function FormatoBadge({ formato, tema }: { formato?: string; tema: Tema }) {
   );
 }
 
-function Puntuaciones({
-  imdb,
-  rottenTomatoes,
-  tema,
-}: {
-  imdb?: string | null;
-  rottenTomatoes?: string | null;
-  tema: Tema;
-}) {
-  if (!imdb && !rottenTomatoes) return null;
-
-  const rt = rottenTomatoes && parseInt(rottenTomatoes);
-
-  return (
-    <div className="flex items-center gap-3">
-      {imdb && (
-        <div
-          className={`flex items-center gap-1 px-2 py-1 rounded-full border ${
-            tema === "oscuro"
-              ? "bg-zinc-800/70 border-white/5"
-              : "bg-amber-50 border-amber-200"
-          }`}
-        >
-          <Star size={12} className="fill-yellow-400 text-yellow-400" />
-
-          <span
-            className={`text-xs font-semibold ${
-              tema === "oscuro" ? "text-yellow-300" : "text-yellow-700"
-            }`}
-          >
-            {imdb}
-          </span>
-        </div>
-      )}
-
-      {rottenTomatoes && (
-        <div
-          className={`px-2 py-1 rounded-full text-xs font-bold border ${
-            Number(rt) >= 75
-              ? tema === "oscuro"
-                ? "bg-green-500/15 text-green-400 border-green-500/20"
-                : "bg-green-50 text-green-700 border-green-300"
-              : Number(rt) >= 50
-                ? tema === "oscuro"
-                  ? "bg-amber-500/15 text-amber-300 border-amber-500/20"
-                  : "bg-amber-50 text-amber-700 border-amber-300"
-                : tema === "oscuro"
-                  ? "bg-red-500/15 text-red-400 border-red-500/20"
-                  : "bg-red-50 text-red-700 border-red-300"
-          }`}
-        >
-          🍅 {rottenTomatoes}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function SesionBtn({
   sesion,
   tema,
   cineNombre,
+  cine,
+  pelicula,
 }: {
   sesion: Sesion;
   tema: Tema;
   cineNombre: string;
+  cine?: CartelEnriquecido["cine"];
+  pelicula?: PeliculaEnriquecida;
 }) {
   const [mostrarTooltip, setMostrarTooltip] = useState(false);
 
-  // 1. Detectar tipo de sala según el formato de la sesión
-  let tipoSala: "normal" | "imax" | "4dx" = "normal";
-  if (sesion.formato?.toLowerCase().includes("imax")) tipoSala = "imax";
-  if (sesion.formato?.toLowerCase().includes("4dx")) tipoSala = "4dx";
-
-  // 2. Normalizar el nombre del cine para que coincida con las llaves de tarifas.ts
-  let claveTarifa = cineNombre;
-  const nombreLower = cineNombre.toLowerCase();
-
-  if (nombreLower.includes("lys")) {
-    claveTarifa = "Cines Lys";
-  } else if (nombreLower.includes("kinepolis")) {
-    claveTarifa = "Kinepolis";
-  } else if (nombreLower.includes("ocine")) {
-    claveTarifa = "Ocine";
-  } else if (nombreLower.includes("abc")) {
-    // Desglosamos cada cine ABC según lo que contenga su nombre real
-    if (nombreLower.includes("park")) claveTarifa = "ABC Park";
-    else if (nombreLower.includes("saler")) claveTarifa = "ABC Saler";
-    else if (
-      nombreLower.includes("gran turia") ||
-      nombreLower.includes("turia")
-    )
-      claveTarifa = "ABC Gran Turia";
-    else if (nombreLower.includes("gandia")) claveTarifa = "ABC Gandía";
-  }
-  // 3. Obtener el objeto de precios dinámico
-  const tarifasInfo = obtenerPrecioSesion({
-    cine: claveTarifa,
-    fecha: new Date(sesion.fecha),
-    tipoSala,
-  });
-
-  const LABELS_TARIFAS: Record<string, string> = {
-    general: "General",
-    reducida: "Reducida",
-    mayores65: "Mayores 65",
-    socios: "Socios",
-    menores14: "Menores 14",
-    carnetJoven: "Carné Joven",
-    estudiante: "Estudiante",
-    familia: "Familia",
-    suplemento3D: "Suplemento 3D",
-    suplementoVIP: "Suplemento VIP",
-  };
+  const tarifasInfo = tarifasDeSesion(cineNombre, sesion.fecha, sesion.formato);
+  // En la app, tocar la sesión abre su ficha en vez de ir directo a comprar
+  const abrirFicha = useContext(AccionSesionContext);
 
   const ahora = new Date();
   const [hora, minuto] = sesion.hora.split(":").map(Number);
@@ -641,6 +485,11 @@ function SesionBtn({
         href={sesion.url_compra}
         target="_blank"
         rel="noopener noreferrer"
+        onClick={(e) => {
+          if (!abrirFicha || !cine || !pelicula) return;
+          e.preventDefault();
+          abrirFicha({ sesion, cine, pelicula });
+        }}
         className={`group relative block min-w-[72px] rounded-xl border backdrop-blur px-3 py-2 transition-all duration-200
         ${
           sesion.disponible
@@ -678,7 +527,7 @@ function SesionBtn({
       </a>
 
       {/* Tooltip individual aislado */}
-      {mostrarTooltip && tarifasInfo && (
+      {mostrarTooltip && tarifasInfo.length > 0 && (
         <div
           className={`absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50 w-44 p-3 rounded-xl shadow-2xl border text-xs animate-in fade-in zoom-in-95 duration-150
           ${
@@ -691,17 +540,12 @@ function SesionBtn({
             Tarifas Previstas
           </div>
           <div className="space-y-1">
-            {Object.entries(tarifasInfo).map(([key, val]) => {
-              if (typeof val !== "number") return null; // Salta objetos anidados como 'matinal' en Kinepolis
-              return (
-                <div key={key} className="flex justify-between gap-2">
-                  <span className="text-zinc-500">
-                    {LABELS_TARIFAS[key] || key}
-                  </span>
-                  <span className="font-bold">{val.toFixed(2)}€</span>
-                </div>
-              );
-            })}
+            {tarifasInfo.map(([etiqueta, precio]) => (
+              <div key={etiqueta} className="flex justify-between gap-2">
+                <span className="text-zinc-500">{etiqueta}</span>
+                <span className="font-bold">{precio.toFixed(2)}€</span>
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -714,11 +558,13 @@ function TarjetaPelicula({
   sesiones,
   tema,
   cineNombre,
+  cine,
 }: {
   pelicula: PeliculaEnriquecida;
   sesiones: Sesion[];
   tema: Tema;
   cineNombre: string;
+  cine: CartelEnriquecido["cine"];
 }) {
   return (
     <div
@@ -847,12 +693,6 @@ function TarjetaPelicula({
             )}
           </div>
 
-          <Puntuaciones
-            imdb={pelicula.imdb}
-            rottenTomatoes={pelicula.rottenTomatoes}
-            tema={tema}
-          />
-
           <div className="mt-5 flex flex-wrap gap-2">
             {sesiones.map((s) => (
               <SesionBtn
@@ -860,6 +700,8 @@ function TarjetaPelicula({
                 sesion={s}
                 tema={tema}
                 cineNombre={cineNombre}
+                cine={cine}
+                pelicula={pelicula}
               />
             ))}
           </div>
@@ -1197,6 +1039,7 @@ function VistaPorCine({
               sesiones={e.sesiones}
               tema={tema}
               cineNombre={cartel.cine.nombre}
+              cine={cartel.cine}
             />
           ))
         ) : (
@@ -1313,11 +1156,19 @@ function VistaPorPelicula({
         const [corta, larga] =
           claveA.length <= claveB.length ? [claveA, claveB] : [claveB, claveA];
 
-        if (corta.length < UMBRAL_CONTENCION) continue;
-        if (!larga.includes(corta)) continue;
-
         const grupoA = mapa.get(claveA)!;
         const grupoB = mapa.get(claveB)!;
+
+        if (
+          !esMismaPelicula(
+            corta,
+            larga,
+            grupoA.pelicula.duracion,
+            grupoB.pelicula.duracion,
+          )
+        ) {
+          continue;
+        }
 
         grupoA.pelicula = elegirMejorPelicula(grupoA.pelicula, grupoB.pelicula);
         grupoA.cines = fusionarListasDeCines(grupoA.cines, grupoB.cines);
@@ -1455,15 +1306,6 @@ function VistaPorPelicula({
                   </span>
                 )}
               </div>
-              {(pelicula.imdb || pelicula.rottenTomatoes) && (
-                <div className="mt-3 flex justify-center sm:justify-start">
-                  <Puntuaciones
-                    imdb={pelicula.imdb}
-                    rottenTomatoes={pelicula.rottenTomatoes}
-                    tema={tema}
-                  />
-                </div>
-              )}
             </div>
           </div>
 
@@ -1514,6 +1356,8 @@ function VistaPorPelicula({
                         sesion={s}
                         tema={tema}
                         cineNombre={cine.nombre}
+                        cine={cine}
+                        pelicula={pelicula}
                       />
                     ))}
                   </div>
@@ -1593,52 +1437,6 @@ function VistaPorPelicula({
 
                 {/* Oscurecer parte inferior */}
                 <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent" />
-
-                {/* IMDB */}
-                {pelicula.imdb && (
-                  <div
-                    className="
-                      absolute
-                      top-3
-                      left-3
-                      flex
-                      items-center
-                      gap-1
-                      rounded-full
-                      bg-yellow-400
-                      px-2.5
-                      py-1
-                      text-[11px]
-                      font-black
-                      text-black
-                      shadow-lg
-                    "
-                  >
-                    <Star size={10} fill="black" />
-                    {pelicula.imdb}
-                  </div>
-                )}
-
-                {/* Rotten Tomatoes */}
-                {pelicula.rottenTomatoes && (
-                  <div
-                    className="
-                      absolute
-                      top-3
-                      right-3
-                      rounded-full
-                      bg-green-500/90
-                      px-2
-                      py-1
-                      text-[10px]
-                      font-bold
-                      text-white
-                      shadow-lg
-                    "
-                  >
-                    🍅 {pelicula.rottenTomatoes}
-                  </div>
-                )}
 
                 {/* Sesiones */}
                 <div
@@ -1815,6 +1613,13 @@ export default function Cartelera({
 
   const esOscuro = tema === "oscuro";
 
+  // "Mi cine" (solo app): ficha de sesión, panel y formulario de entrada
+  const [fichaAbierta, setFichaAbierta] = useState<FichaSesion | null>(null);
+  const [panelMiCine, setPanelMiCine] = useState(false);
+  const [formulario, setFormulario] = useState<Partial<EntradaCine> | null>(
+    null,
+  );
+
   const actualizacion = useActualizacionDisponible();
   const [avisoCerrado, setAvisoCerrado] = useState(false);
 
@@ -1940,6 +1745,15 @@ export default function Cartelera({
     [carteles],
   );
 
+  // Todos los cines con cartelera cargada, para elegir en el formulario
+  const cinesConocidos = useMemo(() => {
+    const mapa = new Map<string, string>();
+    for (const lista of Object.values(cartelesPorFecha)) {
+      for (const c of lista) mapa.set(c.cine.id, c.cine.nombre);
+    }
+    return Array.from(mapa, ([id, nombre]) => ({ id, nombre }));
+  }, [cartelesPorFecha]);
+
   // Texto del botón de ubicación (solo icono: va en la etiqueta accesible)
   const textoUbicacion =
     estadoUbicacion === "concedido"
@@ -2014,6 +1828,19 @@ export default function Cartelera({
                     className={scrapeando ? "animate-spin" : ""}
                   />
                 </button>
+
+              <button
+                onClick={() => setPanelMiCine(true)}
+                aria-label="Mi cine"
+                title="Mi cine"
+                className={`rounded-xl border p-2.5 transition-colors ${
+                  esOscuro
+                    ? "border-white/10 bg-white/5 text-zinc-300 hover:border-amber-400/30 hover:bg-amber-500/10"
+                    : "border-zinc-200 bg-zinc-100 text-zinc-600 hover:border-amber-400/40 hover:bg-amber-50"
+                }`}
+              >
+                <UserRound size={16} />
+              </button>
               </div>
             </div>
 
@@ -2489,6 +2316,7 @@ export default function Cartelera({
   );
 
   return (
+    <AccionSesionContext.Provider value={ES_APP ? setFichaAbierta : null}>
     <div
       className={`min-h-screen selection:bg-amber-400 selection:text-black ${
         esOscuro ? "bg-black text-white" : "bg-zinc-50 text-zinc-900"
@@ -2604,6 +2432,43 @@ export default function Cartelera({
           yelmocines.es
         </a>
       </footer>
+
+      {ES_APP && fichaAbierta && (
+        <HojaSesion
+          ficha={fichaAbierta}
+          tema={tema}
+          onCerrar={() => setFichaAbierta(null)}
+          onGuardar={({ sesion, cine, pelicula }) => {
+            setFichaAbierta(null);
+            setFormulario({
+              pelicula: pelicula.titulo,
+              poster: pelicula.poster,
+              cineId: cine.id,
+              cineNombre: cine.nombre,
+              fecha: sesion.fecha,
+              hora: sesion.hora,
+              sala: sesion.sala,
+              formato: sesion.formato,
+            });
+          }}
+        />
+      )}
+      {ES_APP && panelMiCine && (
+        <MiCine
+          tema={tema}
+          onCerrar={() => setPanelMiCine(false)}
+          onEditar={setFormulario}
+        />
+      )}
+      {ES_APP && formulario && (
+        <FormEntrada
+          inicial={formulario}
+          cines={cinesConocidos}
+          tema={tema}
+          onCerrar={() => setFormulario(null)}
+        />
+      )}
     </div>
+    </AccionSesionContext.Provider>
   );
 }

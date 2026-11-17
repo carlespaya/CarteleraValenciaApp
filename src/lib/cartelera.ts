@@ -93,7 +93,8 @@ export async function construirCartelera(
     if (!cines.some((c) => c.cine.id === previo.cine.id)) cines.push(previo);
   }
 
-  // Enriquecimiento con OMDb (puntuaciones y pósters que falten)
+  // Enriquecimiento con OMDb: solo pósters y sinopsis que falten. Las
+  // puntuaciones (IMDb, Rotten…) no se publican para no sesgar al usuario.
   const titulosUnicos = Array.from(
     new Set(cines.flatMap((c) => c.peliculas.map((p) => p.pelicula.titulo))),
   );
@@ -103,16 +104,13 @@ export async function construirCartelera(
     ...cartel,
     peliculas: cartel.peliculas.map((entry) => {
       const omdb = datosOmdb.get(entry.pelicula.titulo);
-      const { pelicula } = entry;
+      const { imdb, rottenTomatoes, metacritic, ...pelicula } = entry.pelicula;
       return {
         ...entry,
         pelicula: {
           ...pelicula,
           poster: pelicula.poster || omdb?.poster || null,
           sinopsis: omdb?.sinopsis || pelicula.sinopsis || null,
-          imdb: omdb?.imdb || pelicula.imdb || null,
-          rottenTomatoes: omdb?.rottenTomatoes || pelicula.rottenTomatoes || null,
-          metacritic: omdb?.metacritic || pelicula.metacritic || null,
         },
       };
     }),
