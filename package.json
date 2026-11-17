@@ -1,0 +1,32 @@
+{
+  "name": "cartelera-valencia-app",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "cartelera": "tsx scripts/generar-cartelera.ts",
+    "build": "next build",
+    "apk": "node scripts/construir-apk.mjs"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.6.2",
+    "@capacitor/core": "^8.6.2",
+    "cheerio": "^1.2.0",
+    "lucide-react": "^0.383.0",
+    "next": "^14.2.35",
+    "playwright": "1.61.1",
+    "react": "^18",
+    "react-dom": "^18"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.6.2",
+    "@types/node": "^20",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "autoprefixer": "^10.0.1",
+    "postcss": "^8",
+    "tailwindcss": "^3.4.1",
+    "tsx": "^4.23.15",
+    "typescript": "^5"
+  }
+}

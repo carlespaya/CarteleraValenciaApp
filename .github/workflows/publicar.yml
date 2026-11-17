@@ -1,0 +1,95 @@
+# Genera la cartelera y publica la web en GitHub Pages.
+# Se ejecuta cada 2 horas, al subir cambios a main y a mano
+# (pestaña Actions → "Publicar cartelera" → Run workflow).
+# Si algún paso falla, la web publicada sigue siendo la anterior.
+
+name: Publicar cartelera
+
+on:
+  schedule:
+    - cron: "23 */2 * * *" # cada 2 horas (hora UTC)
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write # guardar los datos en la rama "datos"
+  pages: write
+  id-token: write
+
+concurrency:
+  group: publicar
+  cancel-in-progress: false
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: github-pages
+      url: ${{ steps.despliegue.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Datos de la ejecución anterior: sirven para conservar los cines que
+      # fallen esta vez y para no repetir consultas a OMDb
+      - name: Recuperar datos anteriores
+        run: |
+          mkdir -p public/datos .cache
+          if git fetch --depth=1 origin datos; then
+            git archive FETCH_HEAD | tar -x -C public/datos
+            mv public/datos/omdb.json .cache/omdb.json 2>/dev/null || true
+          else
+            echo "Primera ejecución: todavía no hay datos anteriores"
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Caché de Chromium
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Instalar Chromium
+        run: npx playwright install --with-deps --only-shell chromium
+
+      - name: Generar cartelera
+        env:
+          OMDB_API_KEY: ${{ secrets.OMDB_API_KEY }}
+        run: npm run cartelera
+
+      # Se sobrescribe la rama "datos" con un único commit: guarda los datos
+      # para la próxima ejecución sin hacer crecer el historial
+      - name: Guardar datos en la rama "datos"
+        run: |
+          rm -rf "$RUNNER_TEMP/datos" && mkdir "$RUNNER_TEMP/datos"
+          cp public/datos/*.json "$RUNNER_TEMP/datos/"
+          cp .cache/omdb.json "$RUNNER_TEMP/datos/" 2>/dev/null || true
+          cd "$RUNNER_TEMP/datos"
+          git init -q -b datos
+          git add -A
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -q -m "Cartelera $(TZ=Europe/Madrid date +'%Y-%m-%d %H:%M')"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" datos
+
+      - id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Construir web
+        env:
+          NEXT_PUBLIC_BASE_PATH: ${{ steps.pages.outputs.base_path }}
+        run: npm run build
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: out
+
+      - id: despliegue
+        uses: actions/deploy-pages@v4

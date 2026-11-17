@@ -1,0 +1,26 @@
+# dependencias
+node_modules
+
+# build de Next.js
+.next
+out
+*.tsbuildinfo
+next-env.d.ts
+
+# caché de la cartelera (se regenera sola)
+.cache
+
+# variables de entorno con claves: NUNCA subirlas
+.env
+.env*.local
+
+# varios
+.DS_Store
+npm-debug.log*
+
+# web estática generada y datos (los datos viven en la rama "datos")
+out
+public/datos
+
+# app Android: compilaciones y APK generados
+*.apk

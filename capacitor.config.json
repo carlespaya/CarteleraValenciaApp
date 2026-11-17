@@ -1,0 +1,14 @@
+{
+  "appId": "es.cinevalencia.app",
+  "appName": "CineValencia",
+  "webDir": "out",
+  "backgroundColor": "#000000",
+  "android": {
+    "backgroundColor": "#000000"
+  },
+  "plugins": {
+    "SystemBars": {
+      "style": "DARK"
+    }
+  }
+}
