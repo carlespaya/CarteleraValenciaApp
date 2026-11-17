@@ -9,6 +9,7 @@ import {
   RefreshCw,
   Ticket,
   X,
+  Download,
   Star,
   Sun,
   Moon,
@@ -395,6 +396,49 @@ type EstadoUbicacion =
   | "concedido"
   | "denegado"
   | "no_soportado";
+
+// ─── Aviso de actualización (solo en la app) ──────────────────────────────────
+// La app compara su versión con la última release de GitHub, que lleva el APK.
+
+const VERSION_APP = process.env.NEXT_PUBLIC_VERSION_APP ?? "";
+const URL_ACTUALIZACIONES = process.env.NEXT_PUBLIC_URL_ACTUALIZACIONES ?? "";
+
+// "1.2.10" > "1.2.9"
+function esVersionMasNueva(candidata: string, actual: string): boolean {
+  const a = candidata.split(".").map(Number);
+  const b = actual.split(".").map(Number);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) > (b[i] ?? 0);
+  }
+  return false;
+}
+
+function useActualizacionDisponible() {
+  const [nueva, setNueva] = useState<{ version: string; url: string } | null>(
+    null,
+  );
+
+  useEffect(() => {
+    if (!ES_APP || !VERSION_APP || !URL_ACTUALIZACIONES) return;
+    fetch(URL_ACTUALIZACIONES)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((release) => {
+        if (!release) return;
+        const version = String(release.tag_name ?? "").replace(/^v/, "");
+        const apk = (release.assets ?? []).find((a: { name: string }) =>
+          a.name.endsWith(".apk"),
+        );
+        if (version && apk && esVersionMasNueva(version, VERSION_APP)) {
+          setNueva({ version, url: apk.browser_download_url });
+        }
+      })
+      .catch(() => {
+        // Sin conexión o sin releases: simplemente no se avisa
+      });
+  }, []);
+
+  return nueva;
+}
 
 function useUbicacionUsuario() {
   const [coords, setCoords] = useState<Coords | null>(null);
@@ -1771,6 +1815,9 @@ export default function Cartelera({
 
   const esOscuro = tema === "oscuro";
 
+  const actualizacion = useActualizacionDisponible();
+  const [avisoCerrado, setAvisoCerrado] = useState(false);
+
   const {
     coords: ubicacionUsuario,
     estado: estadoUbicacion,
@@ -1969,6 +2016,37 @@ export default function Cartelera({
                 </button>
               </div>
             </div>
+
+            {/* Aviso de versión nueva de la app */}
+            {actualizacion && !avisoCerrado && (
+              <div
+                className={`mt-3 flex items-center gap-3 rounded-xl border px-3 py-2 text-sm ${
+                  esOscuro
+                    ? "bg-amber-500/15 border-amber-400/40 text-amber-200"
+                    : "bg-amber-50 border-amber-300 text-amber-800"
+                }`}
+              >
+                <Download size={16} className="flex-shrink-0" />
+                <span className="flex-1">
+                  Nueva versión {actualizacion.version} disponible
+                </span>
+                <a
+                  href={actualizacion.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-bold underline underline-offset-2"
+                >
+                  Descargar
+                </a>
+                <button
+                  onClick={() => setAvisoCerrado(true)}
+                  aria-label="Cerrar aviso"
+                  className="opacity-60 hover:opacity-100"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            )}
 
             {/* ─── Barra de fechas ──────────────────────────────────────────── */}
             <div className="mt-3 -mx-1 overflow-x-auto scrollbar-none">

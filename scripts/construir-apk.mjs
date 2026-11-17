@@ -23,25 +23,40 @@ function ejecutar(comando, opciones = {}) {
   execSync(comando, { stdio: "inherit", ...opciones });
 }
 
-// https://github.com/<usuario>/<repo>.git → https://<usuario>.github.io/<repo>/datos
-function urlDatosPublicados() {
-  if (process.env.URL_DATOS) return process.env.URL_DATOS;
+// Usuario y repositorio de GitHub, a partir del remoto "origin"
+function repositorioGitHub() {
   let remoto;
   try {
     remoto = execSync("git remote get-url origin", { encoding: "utf8" }).trim();
   } catch {
-    throw new Error(
-      "El proyecto aún no está en GitHub (no hay remoto 'origin').\n" +
-        "Publícalo primero o prueba con: npm run apk -- --datos-locales",
-    );
+    return null;
   }
   const m = remoto.match(/github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?$/);
   if (!m) throw new Error(`No reconozco el repositorio de GitHub: ${remoto}`);
-  return `https://${m[1].toLowerCase()}.github.io/${m[2]}/datos`;
+  return { usuario: m[1], repo: m[2] };
 }
 
-const urlDatos = datosLocales ? "/datos" : urlDatosPublicados();
-console.log(`La app leerá la cartelera de: ${urlDatos}`);
+const repo = repositorioGitHub();
+if (!repo && !datosLocales) {
+  throw new Error(
+    "El proyecto aún no está en GitHub (no hay remoto 'origin').\n" +
+      "Publícalo primero o prueba con: npm run apk -- --datos-locales",
+  );
+}
+
+// https://<usuario>.github.io/<repo>/datos
+const urlDatos = datosLocales
+  ? "/datos"
+  : process.env.URL_DATOS ??
+    `https://${repo.usuario.toLowerCase()}.github.io/${repo.repo}/datos`;
+// La app compara su versión con la última release publicada en GitHub
+const urlActualizaciones = repo
+  ? `https://api.github.com/repos/${repo.usuario}/${repo.repo}/releases/latest`
+  : "";
+const version = JSON.parse(
+  fs.readFileSync(path.join(RAIZ, "package.json"), "utf8"),
+).version;
+console.log(`Versión ${version}. La app leerá la cartelera de: ${urlDatos}`);
 
 // 1. Web estática para la app: sin subcarpeta y con la URL de los datos
 ejecutar("npx next build", {
@@ -50,6 +65,8 @@ ejecutar("npx next build", {
     NEXT_PUBLIC_APP: "1", // diseño compacto de la app
     NEXT_PUBLIC_BASE_PATH: "",
     NEXT_PUBLIC_DATOS_URL: urlDatos,
+    NEXT_PUBLIC_VERSION_APP: version,
+    NEXT_PUBLIC_URL_ACTUALIZACIONES: urlActualizaciones,
   },
 });
 if (!datosLocales) {
@@ -70,7 +87,7 @@ const androidHome =
 
 // Ruta completa: algunos Windows no ejecutan programas de la carpeta actual
 const gradlew = path.join(RAIZ, "android", esWindows ? "gradlew.bat" : "gradlew");
-ejecutar(`"${gradlew}" assembleDebug`, {
+ejecutar(`"${gradlew}" assembleRelease`, {
   cwd: path.join(RAIZ, "android"),
   env: {
     ...process.env,
@@ -79,9 +96,17 @@ ejecutar(`"${gradlew}" assembleDebug`, {
   },
 });
 
-const apk = path.join(RAIZ, "android", "app", "build", "outputs", "apk", "debug", "app-debug.apk");
+// Sin clave de firma (android/firma.properties o secretos), Gradle deja el
+// APK sin firmar y no se podría instalar
+const apk = path.join(RAIZ, "android", "app", "build", "outputs", "apk", "release", "app-release.apk");
+if (!fs.existsSync(apk)) {
+  throw new Error(
+    "No se ha generado un APK firmado. Falta android/firma.properties " +
+      "(o los secretos APK_KEYSTORE / APK_KEYSTORE_PASSWORD).",
+  );
+}
 const destino = path.join(RAIZ, "CineValencia.apk");
 fs.copyFileSync(apk, destino);
 console.log(
-  `\n✅ APK listo: ${destino} (${(fs.statSync(destino).size / 1024 / 1024).toFixed(1)} MB)`,
+  `\n✅ APK ${version} listo: ${destino} (${(fs.statSync(destino).size / 1024 / 1024).toFixed(1)} MB)`,
 );

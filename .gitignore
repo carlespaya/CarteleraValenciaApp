@@ -24,3 +24,8 @@ public/datos
 
 # app Android: compilaciones y APK generados
 *.apk
+
+# clave de firma de la app: NUNCA subirla (va como secreto de GitHub)
+android/firma.properties
+android/*.keystore
+android/firma-*.txt

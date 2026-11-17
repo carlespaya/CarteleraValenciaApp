@@ -1,5 +1,21 @@
 apply plugin: 'com.android.application'
 
+// La versión de la app sale del "version" de package.json (p. ej. 1.2.3).
+// versionCode tiene que crecer en cada versión: 1.2.3 → 10203.
+def versionApp = new groovy.json.JsonSlurper()
+        .parse(rootProject.file('../package.json')).version
+def partesVersion = versionApp.tokenize('.').collect { it as int }
+def codigoVersion = partesVersion[0] * 10000 + partesVersion[1] * 100 + partesVersion[2]
+
+// Clave de firma: siempre la misma, para que cada APK nuevo se instale encima
+// del anterior. En local se lee de android/firma.properties (no se sube a
+// GitHub); en GitHub Actions llega por variables de entorno (secretos).
+def firma = new Properties()
+def archivoFirma = rootProject.file('firma.properties')
+if (archivoFirma.exists()) archivoFirma.withInputStream { firma.load(it) }
+def almacenFirma = System.getenv('APK_KEYSTORE') ?: firma.getProperty('almacen')
+def claveFirma = System.getenv('APK_KEYSTORE_PASSWORD') ?: firma.getProperty('clave')
+
 android {
     namespace = "es.cinevalencia.app"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -7,8 +23,8 @@ android {
         applicationId "es.cinevalencia.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode codigoVersion
+        versionName versionApp
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -16,8 +32,19 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        release {
+            if (almacenFirma) {
+                storeFile rootProject.file(almacenFirma)
+                storePassword claveFirma
+                keyAlias 'cinevalencia'
+                keyPassword claveFirma
+            }
+        }
+    }
     buildTypes {
         release {
+            signingConfig almacenFirma ? signingConfigs.release : null
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }

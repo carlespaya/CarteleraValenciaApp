@@ -1,0 +1,91 @@
+# Compila el APK y lo publica como release de GitHub (vX.Y.Z) con el APK
+# adjunto. La app avisa a quien la tenga instalada de que hay versión nueva.
+#
+# Se ejecuta al subir un cambio de "version" en package.json, o a mano
+# (pestaña Actions → "Publicar app" → Run workflow). Si esa versión ya está
+# publicada, no hace nada.
+#
+# Necesita los secretos APK_KEYSTORE_BASE64 y APK_KEYSTORE_PASSWORD: la clave
+# de firma, siempre la misma para que cada APK se instale encima del anterior.
+
+name: Publicar app
+
+on:
+  push:
+    branches: [main]
+    paths: [package.json]
+  workflow_dispatch:
+
+permissions:
+  contents: write # crear la release
+
+jobs:
+  comprobar:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publicar: ${{ steps.version.outputs.publicar }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "La versión $VERSION ya está publicada: no hay nada que hacer"
+            echo "publicar=no" >> "$GITHUB_OUTPUT"
+          else
+            echo "publicar=si" >> "$GITHUB_OUTPUT"
+          fi
+
+  apk:
+    needs: comprobar
+    if: needs.comprobar.outputs.publicar == 'si'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Comprobar la clave de firma
+        env:
+          ALMACEN: ${{ secrets.APK_KEYSTORE_BASE64 }}
+          CLAVE: ${{ secrets.APK_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -z "$ALMACEN" ] || [ -z "$CLAVE" ]; then
+            echo "::error::Faltan los secretos APK_KEYSTORE_BASE64 y APK_KEYSTORE_PASSWORD"
+            exit 1
+          fi
+          printf '%s' "$ALMACEN" | base64 -d > "$RUNNER_TEMP/cinevalencia.keystore"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - run: npm ci
+
+      - name: Compilar APK
+        env:
+          APK_KEYSTORE: ${{ runner.temp }}/cinevalencia.keystore
+          APK_KEYSTORE_PASSWORD: ${{ secrets.APK_KEYSTORE_PASSWORD }}
+        run: |
+          chmod +x android/gradlew
+          npm run apk
+
+      - name: Publicar release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.comprobar.outputs.version }}
+        run: |
+          gh release create "v$VERSION" CineValencia.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "CineValencia $VERSION" \
+            --notes "Descarga **CineValencia.apk** e instálalo en tu móvil Android. Si ya tienes la app, se actualiza encima sin perder nada." \
+            --latest
